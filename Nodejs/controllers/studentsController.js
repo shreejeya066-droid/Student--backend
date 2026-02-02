@@ -185,11 +185,9 @@ const extractQueryIntent = (text) => {
     const lowerText = text.toLowerCase();
 
     // 1. Check for CGPA / Score queries
-    // Patterns: "above 7.5 cgpa", "scored more than 8.0", "cgpa > 8"
     const cgpaPattern = /(?:above|more than|greater than|scored|cgpa)\s*(\d+(\.\d+)?)\s*(?:cgpa|%|percent)?/i;
     const cgpaMatch = lowerText.match(cgpaPattern);
 
-    // Also pattern: "cgpa above 7" (order swapped in first regex but handling explicit "score X" cases)
     const scorePattern = /score(?:d)?\s+(?:above|more than)\s+(\d+(\.\d+)?)/i;
     const scoreMatch = lowerText.match(scorePattern);
 
@@ -199,8 +197,34 @@ const extractQueryIntent = (text) => {
         return { type: 'cgpa', value: parseFloat(cgpaValue) };
     }
 
-    // 2. Check for Interest / Skill queries
-    // common patterns to look for
+    // 2. PLACEMENT Readiness
+    if (lowerText.includes('placement') || lowerText.includes('ready for job') || lowerText.includes('hired') || lowerText.includes('placed')) {
+        let value = 'Yes'; // Default to "Yes" / "Ready"
+
+        // Check for specific placement statuses if schema supports enum
+        if (lowerText.includes('not')) value = 'No';
+
+        return { type: 'placement', value: value };
+    }
+
+    // 3. HIGHER STUDIES
+    if (lowerText.includes('higher stud') || lowerText.includes('masters') || lowerText.includes('phd') || lowerText.includes('ms')) {
+        return { type: 'higherStudies', value: 'Yes' };
+    }
+
+    // 4. TECH LANGUAGES / SKILLS (Explicit "knows X" or "expert in X")
+    // Or just checking if known languages appear
+    const skillIndicators = ['knows', 'expert', 'proficient', 'using', 'developer'];
+    const knownLangs = ['java', 'python', 'c++', 'javascript', 'react', 'node', 'sql', 'html', 'css', 'aws', 'docker'];
+
+    // Check if query contains a known language directly
+    for (const lang of knownLangs) {
+        if (lowerText.split(/[\s,]+/).includes(lang)) {
+            return { type: 'skill', value: lang };
+        }
+    }
+
+    // 5. Check for Interest / Hobbies / General Patterns
     const interestPatterns = [
         /interested in\s+([a-zA-Z0-9\s,\-]+)/,
         /likes?\s+([a-zA-Z0-9\s,\-]+)/,
@@ -208,7 +232,7 @@ const extractQueryIntent = (text) => {
         /loves?\s+([a-zA-Z0-9\s,\-]+)/,
         /who know(?:s)?\s+([a-zA-Z0-9\s,\-]+)/,
         /students who\s+([a-zA-Z0-9\s,\-]+)/,
-        /showing\s+([a-zA-Z0-9\s,\-]+)/ // "how showing drawing"
+        /showing\s+([a-zA-Z0-9\s,\-]+)/
     ];
 
     let keyword = '';
@@ -216,34 +240,29 @@ const extractQueryIntent = (text) => {
         const match = lowerText.match(pattern);
         if (match && match[1]) {
             keyword = match[1].trim();
-            // Remove common stop words if they appear at start (e.g. "students who are interested in...")
             keyword = keyword.replace(/^(are|is)\s+/, '').trim();
             break;
         }
     }
 
     if (!keyword) {
-        // Fallback: assume the whole meaningful part is the keyword if short
-        // or just take the last few words. 
-        // For "drawing", it's just "drawing".
-        // For "coding", it's "coding".
-        // If simple one word query:
-        if (lowerText.split(' ').length <= 2) {
-            keyword = lowerText;
+        // Fallback for simple queries
+        if (lowerText.split(' ').length <= 3) {
+            // Remove common stopwords
+            const stopWords = ['show', 'me', 'students', 'who', 'are', 'is', 'ready', 'for'];
+            const words = lowerText.split(' ').filter(w => !stopWords.includes(w));
+            if (words.length > 0) keyword = words.join(' ');
         }
     }
 
     if (keyword) {
-        // Clean up: "drawing, coding" -> try to match any.
-        // For now, let's return the raw cleaned keyword
-        return { type: 'interest', value: keyword };
+        return { type: 'general_search', value: keyword };
     }
 
     return { type: 'unknown' };
 };
 
 // Natural Language Query for Students
-// Route: POST /api/students/query
 const naturalLanguageQuery = async (req, res) => {
     try {
         const { query } = req.body;
@@ -256,45 +275,70 @@ const naturalLanguageQuery = async (req, res) => {
         console.log(`Debug: Query="${query}", Intent=`, intent);
 
         let students = [];
+        let searchField = 'General Search';
 
         if (intent.type === 'cgpa') {
-            // Filter by CGPA (Assuming CGPA is stored as String in DB based on model)
-            // We need to fetch and filter in JS if string format varies, or use regex if format is consistent.
-            // Best approach given "String" type: fetch all where cgpa exists, then filter.
-            // Or use $expr with $toDouble if Mongo 4.0+.
-
-            // Allow string comparison for standard "X.Y" format.
-            // We searched for "above X".
+            searchField = `CGPA > ${intent.value}`;
             const minVal = intent.value;
-
-            // Find docs where cgpa is set
             const allStudents = await Student.find({
                 cgpa: { $exists: true, $ne: '' }
             });
-
             students = allStudents.filter(s => {
                 const sCgpa = parseFloat(s.cgpa);
                 return !isNaN(sCgpa) && sCgpa >= minVal;
             });
 
-        } else if (intent.type === 'interest') {
-            const keyword = intent.value;
-            // Split keyword by commas or 'and' to allow "drawing and coding" (search ANY)
-            const terms = keyword.split(/,| and | or /).map(t => t.trim()).filter(t => t);
+        } else if (intent.type === 'placement') {
+            searchField = 'Placement Readiness';
+            // Search in placementWillingness or just checking who filled career details
+            students = await Student.find({
+                $or: [
+                    { placementWillingness: { $regex: /yes|ready|willing/i } },
+                    { interestedDomain: { $exists: true, $ne: '' } } // Broad check for career active students
+                ]
+            });
 
-            // Build OR query for all terms against all interest fields
+        } else if (intent.type === 'higherStudies') {
+            searchField = 'Higher Studies Aspirants';
+            students = await Student.find({
+                $or: [
+                    { higherStudies: { $regex: /yes|plan|aspir/i } },
+                    { higherStudiesDetails: { $exists: true, $ne: '' } }
+                ]
+            });
+
+        } else if (intent.type === 'skill') {
+            searchField = `Skill: ${intent.value}`;
+            const regex = new RegExp(intent.value, 'i');
+            students = await Student.find({
+                $or: [
+                    { programmingLanguages: regex },
+                    { technicalSkills: regex },
+                    { tools: regex },
+                    { certifications: regex },
+                    { interest: regex } // Fallback
+                ]
+            });
+
+        } else if (intent.type === 'general_search' || intent.type === 'interest') {
+            const keyword = intent.value;
+            searchField = `Keyword: ${keyword}`;
+
+            const terms = keyword.split(/,| and | or /).map(t => t.trim()).filter(t => t);
             const orConditions = [];
 
             terms.forEach(term => {
                 const regex = new RegExp(term, 'i');
                 orConditions.push(
                     { interest: regex },
-                    { hobbies: regex }, // Arrays work with regex match on elements
+                    { hobbies: regex },
                     { interestedDomain: regex },
                     { programmingLanguages: regex },
                     { technicalSkills: regex },
                     { higherStudiesDetails: regex },
-                    { sports: regex }
+                    { sports: regex },
+                    { prefLocation: regex },
+                    { department: regex } // Adding Dept search too
                 );
             });
 
@@ -305,15 +349,15 @@ const naturalLanguageQuery = async (req, res) => {
             return res.status(200).json({
                 meta: { original_query: query, count: 0 },
                 data: [],
-                message: "Could not understand query. Try 'interested in coding' or 'cgpa above 8.0'"
+                message: "Could not understand query. Try 'java experts', 'placement ready', 'higher studies', or 'cgpa above 8.0'"
             });
         }
 
-        // Return Response
         res.status(200).json({
             meta: {
                 original_query: query,
-                extracted_intent: intent,
+                extracted_keyword: searchField, // Frontend expects this key
+                extracted_intent: intent, // Send full intent object for UI logic
                 count: students.length
             },
             data: students
