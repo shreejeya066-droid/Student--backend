@@ -4,6 +4,7 @@ const studentsController = require('../controllers/studentsController');
 
 // Search / Query Route
 router.get('/analytics', studentsController.getAnalytics);
+router.get('/powerbi', studentsController.getPowerBIData);
 router.post('/query', studentsController.naturalLanguageQuery);
 router.post('/login', studentsController.loginStudent);
 router.post('/check-status', studentsController.checkStudentStatus);

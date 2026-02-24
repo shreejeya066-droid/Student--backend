@@ -409,7 +409,28 @@ const getAnalytics = async (req, res) => {
             performance: performanceData,
             attendanceDistribution: distribution
         });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
 
+// Get RAW Data for Power BI (Flattened)
+const getPowerBIData = async (req, res) => {
+    try {
+        const students = await Student.find({});
+        const flatData = students.map(s => ({
+            RollNumber: s.rollNumber,
+            Name: s.firstName ? `${s.firstName} ${s.lastName}` : s.rollNumber,
+            Department: s.department || 'Unknown',
+            Year: s.yearOfStudy || 1,
+            CGPA: parseFloat(s.cgpa) || 0,
+            Attendance: s.attendance || 0,
+            PlacementWillingness: s.placementWillingness || 'No',
+            HigherStudies: s.higherStudies || 'No',
+            Skills: s.technicalSkills || 'None',
+            Gender: s.gender || 'Not Specified'
+        }));
+        res.status(200).json(flatData);
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
@@ -424,5 +445,6 @@ module.exports = {
     deleteStudent,
     naturalLanguageQuery,
     getAnalytics,
+    getPowerBIData,
     checkStudentStatus
 };
