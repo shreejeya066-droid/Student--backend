@@ -1,0 +1,138 @@
+[dotenv@17.2.3] injecting env (2) from .env -- tip: ⚙️  suppress all logs with { quiet: true }
+Connecting to: mongodb://StudentAdmin:Student2026@ac-g95ixj8-shard-00-00.1ndlcni.mongodb.net:27017,ac-g95ixj8-shard-00-01.1ndlcni.mongodb.net:27017,ac-g95ixj8-shard-00-02.1ndlcni.mongodb.net:27017/school_management?ssl=true&replicaSet=atlas-g95ixj8-shard-0&authSource=admin&retryWrites=true&w=majority Family: 9.1.4
+FULL ERROR STRUCT:
+MongooseServerSelectionError: Could not connect to any servers in your MongoDB Atlas cluster. One common reason is that you're trying to access the database from an IP that isn't whitelisted. Make sure your current IP address is on your Atlas cluster's IP whitelist: https://www.mongodb.com/docs/atlas/security-whitelist/
+    at _handleConnectionErrors (D:\Learn\Nodejs\node_modules\mongoose\lib\connection.js:1169:11)
+    at NativeConnection.openUri (D:\Learn\Nodejs\node_modules\mongoose\lib\connection.js:1100:11) {
+  errorLabelSet: Set(0) {},
+  reason: TopologyDescription {
+    type: 'ReplicaSetNoPrimary',
+    servers: Map(3) {
+      'ac-g95ixj8-shard-00-00.1ndlcni.mongodb.net:27017' => [ServerDescription],
+      'ac-g95ixj8-shard-00-01.1ndlcni.mongodb.net:27017' => [ServerDescription],
+      'ac-g95ixj8-shard-00-02.1ndlcni.mongodb.net:27017' => [ServerDescription]
+    },
+    stale: false,
+    compatible: true,
+    heartbeatFrequencyMS: 10000,
+    localThresholdMS: 15,
+    setName: 'atlas-g95ixj8-shard-0',
+    maxElectionId: null,
+    maxSetVersion: null,
+    commonWireVersion: 0,
+    logicalSessionTimeoutMinutes: null
+  },
+  code: undefined,
+  cause: TopologyDescription {
+    type: 'ReplicaSetNoPrimary',
+    servers: Map(3) {
+      'ac-g95ixj8-shard-00-00.1ndlcni.mongodb.net:27017' => [ServerDescription],
+      'ac-g95ixj8-shard-00-01.1ndlcni.mongodb.net:27017' => [ServerDescription],
+      'ac-g95ixj8-shard-00-02.1ndlcni.mongodb.net:27017' => [ServerDescription]
+    },
+    stale: false,
+    compatible: true,
+    heartbeatFrequencyMS: 10000,
+    localThresholdMS: 15,
+    setName: 'atlas-g95ixj8-shard-0',
+    maxElectionId: null,
+    maxSetVersion: null,
+    commonWireVersion: 0,
+    logicalSessionTimeoutMinutes: null
+  }
+}
+REASON: TopologyDescription {
+  type: 'ReplicaSetNoPrimary',
+  servers: Map(3) {
+    'ac-g95ixj8-shard-00-00.1ndlcni.mongodb.net:27017' => ServerDescription {
+      address: 'ac-g95ixj8-shard-00-00.1ndlcni.mongodb.net:27017',
+      type: 'Unknown',
+      hosts: [],
+      passives: [],
+      arbiters: [],
+      tags: {},
+      minWireVersion: 0,
+      maxWireVersion: 0,
+      roundTripTime: -1,
+      minRoundTripTime: 0,
+      lastUpdateTime: 4506487,
+      lastWriteDate: 0,
+      error: [MongoNetworkError],
+      topologyVersion: null,
+      setName: null,
+      setVersion: null,
+      electionId: null,
+      logicalSessionTimeoutMinutes: null,
+      maxMessageSizeBytes: null,
+      maxWriteBatchSize: null,
+      maxBsonObjectSize: null,
+      primary: null,
+      me: null,
+      '$clusterTime': null,
+      iscryptd: false
+    },
+    'ac-g95ixj8-shard-00-01.1ndlcni.mongodb.net:27017' => ServerDescription {
+      address: 'ac-g95ixj8-shard-00-01.1ndlcni.mongodb.net:27017',
+      type: 'Unknown',
+      hosts: [],
+      passives: [],
+      arbiters: [],
+      tags: {},
+      minWireVersion: 0,
+      maxWireVersion: 0,
+      roundTripTime: -1,
+      minRoundTripTime: 0,
+      lastUpdateTime: 4506488,
+      lastWriteDate: 0,
+      error: [MongoNetworkError],
+      topologyVersion: null,
+      setName: null,
+      setVersion: null,
+      electionId: null,
+      logicalSessionTimeoutMinutes: null,
+      maxMessageSizeBytes: null,
+      maxWriteBatchSize: null,
+      maxBsonObjectSize: null,
+      primary: null,
+      me: null,
+      '$clusterTime': null,
+      iscryptd: false
+    },
+    'ac-g95ixj8-shard-00-02.1ndlcni.mongodb.net:27017' => ServerDescription {
+      address: 'ac-g95ixj8-shard-00-02.1ndlcni.mongodb.net:27017',
+      type: 'Unknown',
+      hosts: [],
+      passives: [],
+      arbiters: [],
+      tags: {},
+      minWireVersion: 0,
+      maxWireVersion: 0,
+      roundTripTime: -1,
+      minRoundTripTime: 0,
+      lastUpdateTime: 4506486,
+      lastWriteDate: 0,
+      error: [MongoNetworkError],
+      topologyVersion: null,
+      setName: null,
+      setVersion: null,
+      electionId: null,
+      logicalSessionTimeoutMinutes: null,
+      maxMessageSizeBytes: null,
+      maxWriteBatchSize: null,
+      maxBsonObjectSize: null,
+      primary: null,
+      me: null,
+      '$clusterTime': null,
+      iscryptd: false
+    }
+  },
+  stale: false,
+  compatible: true,
+  heartbeatFrequencyMS: 10000,
+  localThresholdMS: 15,
+  setName: 'atlas-g95ixj8-shard-0',
+  maxElectionId: null,
+  maxSetVersion: null,
+  commonWireVersion: 0,
+  logicalSessionTimeoutMinutes: null
+}
