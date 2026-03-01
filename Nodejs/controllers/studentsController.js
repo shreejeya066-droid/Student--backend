@@ -178,88 +178,75 @@ const deleteStudent = async (req, res) => {
     }
 };
 
-// Helper function to extract intention and keyword
+// Helper function to extract multiple intents for compound queries
 const extractQueryIntent = (text) => {
-    if (!text) return { type: 'unknown' };
+    if (!text) return { filters: {}, searchField: 'None' };
 
     const lowerText = text.toLowerCase();
+    const filters = {};
+    const intentDescriptions = [];
 
-    // 1. Check for CGPA / Score queries
-    const cgpaPattern = /(?:above|more than|greater than|scored|cgpa)\s*(\d+(\.\d+)?)\s*(?:cgpa|%|percent)?/i;
-    const cgpaMatch = lowerText.match(cgpaPattern);
-
-    const scorePattern = /score(?:d)?\s+(?:above|more than)\s+(\d+(\.\d+)?)/i;
-    const scoreMatch = lowerText.match(scorePattern);
-
-    const cgpaValue = cgpaMatch ? cgpaMatch[1] : (scoreMatch ? scoreMatch[1] : null);
-
-    if (cgpaValue) {
-        return { type: 'cgpa', value: parseFloat(cgpaValue) };
-    }
-
-    // 2. PLACEMENT Readiness
-    if (lowerText.includes('placement') || lowerText.includes('ready for job') || lowerText.includes('hired') || lowerText.includes('placed')) {
-        let value = 'Yes'; // Default to "Yes" / "Ready"
-
-        // Check for specific placement statuses if schema supports enum
-        if (lowerText.includes('not')) value = 'No';
-
-        return { type: 'placement', value: value };
-    }
-
-    // 3. HIGHER STUDIES
-    if (lowerText.includes('higher stud') || lowerText.includes('masters') || lowerText.includes('phd') || lowerText.includes('ms')) {
-        return { type: 'higherStudies', value: 'Yes' };
-    }
-
-    // 4. TECH LANGUAGES / SKILLS (Explicit "knows X" or "expert in X")
-    // Or just checking if known languages appear
-    const skillIndicators = ['knows', 'expert', 'proficient', 'using', 'developer'];
-    const knownLangs = ['java', 'python', 'c++', 'javascript', 'react', 'node', 'sql', 'html', 'css', 'aws', 'docker'];
-
-    // Check if query contains a known language directly
-    for (const lang of knownLangs) {
-        if (lowerText.split(/[\s,]+/).includes(lang)) {
-            return { type: 'skill', value: lang };
-        }
-    }
-
-    // 5. Check for Interest / Hobbies / General Patterns
-    const interestPatterns = [
-        /interested in\s+([a-zA-Z0-9\s,\-]+)/,
-        /likes?\s+([a-zA-Z0-9\s,\-]+)/,
-        /enjoys?\s+([a-zA-Z0-9\s,\-]+)/,
-        /loves?\s+([a-zA-Z0-9\s,\-]+)/,
-        /who know(?:s)?\s+([a-zA-Z0-9\s,\-]+)/,
-        /students who\s+([a-zA-Z0-9\s,\-]+)/,
-        /showing\s+([a-zA-Z0-9\s,\-]+)/
-    ];
-
-    let keyword = '';
-    for (const pattern of interestPatterns) {
-        const match = lowerText.match(pattern);
-        if (match && match[1]) {
-            keyword = match[1].trim();
-            keyword = keyword.replace(/^(are|is)\s+/, '').trim();
+    // 1. Department Extractor
+    // E.g., CSE, IT, ECE, EEE, MECH, CIVIL, AIDS, AIML
+    const departments = ['cse', 'it', 'ece', 'eee', 'mech', 'civil', 'aids', 'aiml'];
+    for (const dept of departments) {
+        if (lowerText.match(new RegExp(`\\b${dept}\\b`, 'i'))) {
+            filters.department = dept.toUpperCase();
+            intentDescriptions.push(`Dept: ${dept.toUpperCase()}`);
             break;
         }
     }
 
-    if (!keyword) {
-        // Fallback for simple queries
-        if (lowerText.split(' ').length <= 3) {
-            // Remove common stopwords
-            const stopWords = ['show', 'me', 'students', 'who', 'are', 'is', 'ready', 'for'];
-            const words = lowerText.split(' ').filter(w => !stopWords.includes(w));
-            if (words.length > 0) keyword = words.join(' ');
-        }
+    // 2. CGPA Extractor
+    const cgpaPattern = /(?:above|more than|greater than|>)\s*(\d+(\.\d+)?)\s*(?:cgpa|%|percent)?/i;
+    const cgpaPatt2 = /cgpa\s*(?:above|more than|>|greater than)?\s*(\d+(\.\d+)?)/i;
+    const cgpaMatch = lowerText.match(cgpaPattern) || lowerText.match(cgpaPatt2);
+    if (cgpaMatch) {
+        filters.minCgpa = parseFloat(cgpaMatch[1]);
+        intentDescriptions.push(`CGPA > ${filters.minCgpa}`);
     }
 
-    if (keyword) {
-        return { type: 'general_search', value: keyword };
+    // 3. Placement Extractor
+    if (/(placement|job)\s*(ready|willing)/i.test(lowerText) || /ready for (placement|job)/i.test(lowerText)) {
+        filters.placementWillingness = 'Yes';
+        intentDescriptions.push('Placement Ready');
     }
 
-    return { type: 'unknown' };
+    // 4. Higher Studies
+    if (/higher\s*(studies|education)/i.test(lowerText) || /(ms|phd|masters)/i.test(lowerText)) {
+        filters.higherStudies = 'Yes';
+        intentDescriptions.push('Higher Studies');
+    }
+
+    // 5. Skills/Keywords Extractor
+    let keywordText = lowerText
+        .replace(cgpaPattern, '')
+        .replace(cgpaPatt2, '')
+        .replace(/(placement|job)\s*(ready|willing)/i, '')
+        .replace(/ready for (placement|job)/i, '')
+        .replace(/higher\s*(studies|education)/i, '')
+        .replace(/(ms|phd|masters)/i, '')
+        // Remove common stopwords and preposition words
+        .replace(/\b(show|me|students|who|are|is|in|from|with|have|has|know|knows|interested|interest|expert|proficient|good at|using|developer|and|the)\b/gi, ' ')
+        .trim();
+
+    for (const dept of departments) {
+        keywordText = keywordText.replace(new RegExp(`\\b${dept}\\b`, 'i'), '');
+    }
+
+    // Clean up extra spaces
+    keywordText = keywordText.replace(/\s+/g, ' ').trim();
+
+    if (keywordText.length > 1) {
+        filters.keyword = keywordText;
+        intentDescriptions.push(`Keywords: "${keywordText}"`);
+    }
+
+    return {
+        filters,
+        searchField: intentDescriptions.length > 0 ? intentDescriptions.join(' + ') : 'General Search',
+        raw: text
+    };
 };
 
 // Natural Language Query for Students
@@ -272,92 +259,97 @@ const naturalLanguageQuery = async (req, res) => {
         }
 
         const intent = extractQueryIntent(query);
-        console.log(`Debug: Query="${query}", Intent=`, intent);
+        const { filters, searchField } = intent;
 
-        let students = [];
-        let searchField = 'General Search';
+        console.log(`Debug: Query="${query}", Extracted=`, filters);
 
-        if (intent.type === 'cgpa') {
-            searchField = `CGPA > ${intent.value}`;
-            const minVal = intent.value;
-            const allStudents = await Student.find({
-                cgpa: { $exists: true, $ne: '' }
+        if (Object.keys(filters).length === 0) {
+            return res.status(200).json({
+                meta: { original_query: query, count: 0 },
+                data: [],
+                message: "Could not understand query. Try 'java experts in CSE', 'placement ready', 'higher studies', or 'cgpa above 8.0'"
             });
-            students = allStudents.filter(s => {
-                const sCgpa = parseFloat(s.cgpa);
-                return !isNaN(sCgpa) && sCgpa >= minVal;
-            });
+        }
 
-        } else if (intent.type === 'placement') {
-            searchField = 'Placement Readiness';
-            // Search in placementWillingness or just checking who filled career details
-            students = await Student.find({
-                $or: [
-                    { placementWillingness: { $regex: /yes|ready|willing/i } },
-                    { interestedDomain: { $exists: true, $ne: '' } } // Broad check for career active students
-                ]
-            });
+        // Build MongoDB Query Object based on extracted filters
+        const mongoQuery = {};
 
-        } else if (intent.type === 'higherStudies') {
-            searchField = 'Higher Studies Aspirants';
-            students = await Student.find({
-                $or: [
+        // Apply filters
+        if (filters.department) {
+            mongoQuery.department = { $regex: new RegExp(`^${filters.department}$`, 'i') };
+        }
+
+        if (filters.placementWillingness) {
+            mongoQuery.$or = mongoQuery.$or || [];
+            mongoQuery.$or.push(
+                { placementWillingness: { $regex: /yes|ready|willing/i } },
+                { interestedDomain: { $exists: true, $ne: '' } }
+            );
+        }
+
+        if (filters.higherStudies) {
+            if (mongoQuery.$or) {
+                // Move existing $or to an $and array to avoid overwrite
+                mongoQuery.$and = [{ $or: mongoQuery.$or }];
+                delete mongoQuery.$or;
+                mongoQuery.$and.push({
+                    $or: [
+                        { higherStudies: { $regex: /yes|plan|aspir/i } },
+                        { higherStudiesDetails: { $exists: true, $ne: '' } }
+                    ]
+                });
+            } else {
+                mongoQuery.$or = [
                     { higherStudies: { $regex: /yes|plan|aspir/i } },
                     { higherStudiesDetails: { $exists: true, $ne: '' } }
-                ]
-            });
+                ];
+            }
+        }
 
-        } else if (intent.type === 'skill') {
-            searchField = `Skill: ${intent.value}`;
-            const regex = new RegExp(intent.value, 'i');
-            students = await Student.find({
-                $or: [
-                    { programmingLanguages: regex },
-                    { technicalSkills: regex },
-                    { tools: regex },
-                    { certifications: regex },
-                    { interest: regex } // Fallback
-                ]
-            });
-
-        } else if (intent.type === 'general_search' || intent.type === 'interest') {
-            const keyword = intent.value;
-            searchField = `Keyword: ${keyword}`;
-
-            const terms = keyword.split(/,| and | or /).map(t => t.trim()).filter(t => t);
-            const orConditions = [];
-
-            terms.forEach(term => {
-                const regex = new RegExp(term, 'i');
-                orConditions.push(
+        if (filters.keyword) {
+            const keywords = filters.keyword.split(' ').map(k => k.trim()).filter(k => k);
+            if (keywords.length > 0) {
+                const keywordRegexes = keywords.map(k => new RegExp(k, 'i'));
+                const orConditions = keywordRegexes.flatMap(regex => [
                     { interest: regex },
                     { hobbies: regex },
                     { interestedDomain: regex },
                     { programmingLanguages: regex },
                     { technicalSkills: regex },
+                    { tools: regex },
+                    { certifications: regex },
                     { higherStudiesDetails: regex },
                     { sports: regex },
-                    { prefLocation: regex },
-                    { department: regex } // Adding Dept search too
-                );
-            });
+                    { prefLocation: regex }
+                ]);
 
-            if (orConditions.length > 0) {
-                students = await Student.find({ $or: orConditions });
+                if (mongoQuery.$and) {
+                    mongoQuery.$and.push({ $or: orConditions });
+                } else if (mongoQuery.$or) {
+                    mongoQuery.$and = [{ $or: mongoQuery.$or }, { $or: orConditions }];
+                    delete mongoQuery.$or;
+                } else {
+                    mongoQuery.$or = orConditions;
+                }
             }
-        } else {
-            return res.status(200).json({
-                meta: { original_query: query, count: 0 },
-                data: [],
-                message: "Could not understand query. Try 'java experts', 'placement ready', 'higher studies', or 'cgpa above 8.0'"
+        }
+
+        let students = await Student.find(mongoQuery);
+
+        // Post-filter for CGPA
+        if (filters.minCgpa !== undefined) {
+            students = students.filter(s => {
+                if (!s.cgpa) return false;
+                const sCgpa = parseFloat(s.cgpa);
+                return !isNaN(sCgpa) && sCgpa >= filters.minCgpa;
             });
         }
 
         res.status(200).json({
             meta: {
                 original_query: query,
-                extracted_keyword: searchField, // Frontend expects this key
-                extracted_intent: intent, // Send full intent object for UI logic
+                extracted_keyword: searchField,
+                extracted_intent: filters,
                 count: students.length
             },
             data: students
