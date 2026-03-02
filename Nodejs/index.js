@@ -32,6 +32,7 @@ app.use('/api/students', studentRoutes);
 app.use('/api/teachers', teacherRoutes);
 app.use('/api/admin', require('./routes/adminRoutes'));
 app.use('/api/settings', require('./routes/systemSettingsRoutes'));
+app.use('/api/powerbi', require('./routes/powerbiRoutes'));
 
 // Serve Uploaded Files
 app.use('/uploads', express.static('uploads'));
