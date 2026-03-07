@@ -1,0 +1,16 @@
+﻿
+
+ComputerName     : ac-enhoizf-
+                   shard-00-00
+                   .1ndlcni.mo
+                   ngodb.net
+RemoteAddress    : 159.41.168.
+                   67
+RemotePort       : 27017
+InterfaceAlias   : Wi-Fi
+SourceAddress    : 172.26.97.1
+                   28
+TcpTestSucceeded : True
+
+
+

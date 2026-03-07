@@ -1,0 +1,2 @@
+﻿[dotenv@17.2.3] injecting env (2) from .env -- tip: ΓÜÖ∩╕Å  load multiple .env files with { path: ['.env.local', '.env'] }
+Connecting to: mongodb://StudentAdmin:Student2026@cluster0.1ndlcni.mongodb.net/school_management

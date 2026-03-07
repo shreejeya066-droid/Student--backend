@@ -1,0 +1,11 @@
+
+Pinging ec2-159-41-168-67.ap-south-1.compute.amazonaws.com [159.41.168.67] with 32 bytes of data:
+Reply from 159.41.168.67: bytes=32 time=608ms TTL=115
+Request timed out.
+Request timed out.
+Request timed out.
+
+Ping statistics for 159.41.168.67:
+    Packets: Sent = 4, Received = 1, Lost = 3 (75% loss),
+Approximate round trip times in milli-seconds:
+    Minimum = 608ms, Maximum = 608ms, Average = 608ms
