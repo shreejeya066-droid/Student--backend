@@ -11,7 +11,7 @@ const getSettings = async (req, res) => {
         } else {
             // Default fallbacks if not found in DB
             if (key === 'allowed_years') {
-                return res.json(['19', '20', '21', '22', '23', '24', '25', '26']);
+                return res.json(['23', '24', '25', '26']);
             }
             res.status(404).json({ message: 'Setting not found' });
         }

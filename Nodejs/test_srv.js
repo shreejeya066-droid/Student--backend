@@ -1,1 +1,0 @@
-const mongoose = require('mongoose'); mongoose.connect('mongodb+srv://StudentAdmin:Student2026@cluster0.1ndlcni.mongodb.net/school_management').then(() => { console.log('success+srv'); process.exit(0); }).catch(e => { console.error('error', e.message); process.exit(1); });

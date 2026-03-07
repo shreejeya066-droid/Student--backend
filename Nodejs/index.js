@@ -1,4 +1,6 @@
 require('dotenv').config();
+const dns = require('dns');
+dns.setServers(['8.8.8.8', '8.8.4.4']); // Force Google DNS to bypass network restrictions
 const express = require('express');
 const cors = require('cors');
 const studentRoutes = require('./routes/studentRoutes');
