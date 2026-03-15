@@ -3,6 +3,7 @@ const dns = require('dns');
 dns.setServers(['8.8.8.8', '8.8.4.4']); // Force Google DNS to bypass network restrictions
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 const studentRoutes = require('./routes/studentRoutes');
 const teacherRoutes = require('./routes/teacherRoutes');
 const connectDB = require('./config/db');
@@ -37,7 +38,7 @@ app.use('/api/settings', require('./routes/systemSettingsRoutes'));
 app.use('/api/powerbi', require('./routes/powerbiRoutes'));
 
 // Serve Uploaded Files
-app.use('/uploads', express.static('uploads'));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Root endpoint
 app.get('/', (req, res) => {
