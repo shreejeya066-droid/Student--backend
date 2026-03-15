@@ -40,6 +40,16 @@ app.use('/api/powerbi', require('./routes/powerbiRoutes'));
 // Serve Uploaded Files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
+// Handle 404 for missing files in '/uploads' (Render ephemeral disk wipes them)
+app.use('/uploads', (req, res) => {
+    res.status(404).send(`
+        <h3>File Not Found</h3>
+        <p>The requested document could not be found.</p>
+        <p><strong>Note for Render Hosting:</strong> Render's free tier uses an <em>ephemeral file system</em>. This means any files uploaded to the 'uploads' folder are <strong>deleted</strong> every time the server goes to sleep or restarts.</p>
+        <p>To fix this permanently, you will need to upload files to a cloud storage service like Amazon S3, Cloudinary, or Firebase Storage.</p>
+    `);
+});
+
 // Root endpoint
 app.get('/', (req, res) => {
     res.send('Backend is running!');
