@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const studentsController = require('../controllers/studentsController');
+const otpController = require('../controllers/otpController');
 const multer = require('multer');
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const cloudinary = require('cloudinary').v2;
@@ -41,6 +42,10 @@ router.post('/register', studentsController.registerStudent);
 router.get('/:rollNumber', studentsController.getStudentProfile);
 router.put('/:rollNumber', studentsController.updateStudentProfile);
 router.delete('/:rollNumber', studentsController.deleteStudent);
+// Password Recovery Routes
+router.post('/send-otp', otpController.sendOTP);
+router.post('/verify-otp', otpController.verifyOTP);
+
 router.get('/', studentsController.getAllStudents);
 
 module.exports = router;
