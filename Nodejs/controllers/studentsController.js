@@ -187,62 +187,80 @@ const extractQueryIntent = (text) => {
     const intentDescriptions = [];
 
     // 1. Department Extractor
-    // E.g., CS, IT, Languages, CSE, ECE, EEE, MECH, etc.
     const departments = ['cs', 'it', 'languages', 'cse', 'ece', 'eee', 'mech', 'civil', 'aids', 'aiml'];
     for (const dept of departments) {
         if (lowerText.match(new RegExp(`\\b${dept}\\b`, 'i'))) {
-            // Mapping CS to CSE if needed, or keeping it as is. 
-            // In the frontend dropdown, value is 'CS' and 'Languages'
             filters.department = dept.toUpperCase();
             intentDescriptions.push(`Dept: ${dept.toUpperCase()}`);
             break;
         }
     }
 
-    // 2. CGPA Extractor
-    const cgpaPattern = /(?:above|more than|greater than|>)\s*(\d+(\.\d+)?)\s*(?:cgpa|%|percent)?/i;
-    const cgpaPatt2 = /cgpa\s*(?:above|more than|>|greater than)?\s*(\d+(\.\d+)?)/i;
-    const cgpaMatch = lowerText.match(cgpaPattern) || lowerText.match(cgpaPatt2);
-    if (cgpaMatch) {
-        filters.minCgpa = parseFloat(cgpaMatch[1]);
-        intentDescriptions.push(`CGPA > ${filters.minCgpa}`);
+    // 2. Year Filter
+    const yearMatch = lowerText.match(/(\d+)(?:st|nd|rd|th)?\s*year/);
+    if (yearMatch) {
+        filters.yearOfStudy = parseInt(yearMatch[1]);
+        intentDescriptions.push(`Year: ${filters.yearOfStudy}`);
     }
 
-    // 3. Placement Extractor
-    if (/(placement|job)\s*(ready|willing)/i.test(lowerText) || /ready for (placement|job)/i.test(lowerText)) {
+    // 3. CGPA Extractor (Enhanced: Above, Below, Between)
+    const betweenCgpaMatch = lowerText.match(/between\s*(\d+(\.\d+)?)\s*and\s*(\d+(\.\d+)?)/i);
+    if (betweenCgpaMatch) {
+        filters.minCgpa = parseFloat(betweenCgpaMatch[1]);
+        filters.maxCgpa = parseFloat(betweenCgpaMatch[3]);
+        intentDescriptions.push(`CGPA: ${filters.minCgpa}-${filters.maxCgpa}`);
+    } else {
+        const aboveCgpaMatch = lowerText.match(/(?:above|more than|greater than|>)\s*(\d+(\.\d+)?)/i);
+        const belowCgpaMatch = lowerText.match(/(?:below|less than|smaller than|<)\s*(\d+(\.\d+)?)/i);
+        
+        if (aboveCgpaMatch) {
+            filters.minCgpa = parseFloat(aboveCgpaMatch[1]);
+            intentDescriptions.push(`CGPA > ${filters.minCgpa}`);
+        }
+        if (belowCgpaMatch) {
+            filters.maxCgpa = parseFloat(belowCgpaMatch[1]);
+            intentDescriptions.push(`CGPA < ${filters.maxCgpa}`);
+        }
+    }
+
+    // 4. Placement Status Filter
+    if (lowerText.includes('not placed')) {
+        filters.placement = 'notPlaced';
+        intentDescriptions.push('Status: Not Placed');
+    } else if (lowerText.match(/\bplaced\b/i)) {
+        filters.placement = 'placed';
+        intentDescriptions.push('Status: Placed');
+    }
+
+    // 5. Skills Extractor ($in support)
+    const skillsToDetect = ['coding', 'python', 'java', 'quiz', 'javascript', 'react', 'node'];
+    const detectedSkills = [];
+    for (const skill of skillsToDetect) {
+        if (lowerText.match(new RegExp(`\\b${skill}\\b`, 'i'))) {
+            detectedSkills.push(skill);
+        }
+    }
+    if (detectedSkills.length > 0) {
+        filters.skills = detectedSkills;
+        intentDescriptions.push(`Skills: [${detectedSkills.join(', ')}]`);
+    }
+
+    // 6. Legacy / Other
+    if (/(placement|job)\s*(ready|willing)/i.test(lowerText)) {
         filters.placementWillingness = 'Yes';
-        intentDescriptions.push('Placement Ready');
     }
-
-    // 4. Higher Studies
-    if (/higher\s*(studies|education)/i.test(lowerText) || /(ms|phd|masters)/i.test(lowerText)) {
+    if (/higher\s*(studies|education)/i.test(lowerText)) {
         filters.higherStudies = 'Yes';
-        intentDescriptions.push('Higher Studies');
     }
 
-    // 5. Skills/Keywords Extractor
     let keywordText = lowerText
-        .replace(cgpaPattern, '')
-        .replace(cgpaPatt2, '')
-        .replace(/(placement|job)\s*(ready|willing)/i, '')
-        .replace(/ready for (placement|job)/i, '')
-        .replace(/higher\s*(studies|education)/i, '')
-        .replace(/(ms|phd|masters)/i, '')
-        // Remove common stopwords and preposition words
+        .replace(/(\d+)(?:st|nd|rd|th)?\s*year/g, '')
+        .replace(/between\s*\d+(\.\d+)?\s*and\s*\d+(\.\d+)?/gi, '')
+        .replace(/(?:above|more than|greater than|below|less than|smaller than|>|<)\s*\d+(\.\d+)?/gi, '')
+        .replace(/not\s*placed/gi, '')
+        .replace(/\bplaced\b/gi, '')
         .replace(/\b(show|me|students|who|are|is|in|from|with|have|has|know|knows|interested|interest|expert|proficient|good at|using|developer|and|the)\b/gi, ' ')
         .trim();
-
-    for (const dept of departments) {
-        keywordText = keywordText.replace(new RegExp(`\\b${dept}\\b`, 'i'), '');
-    }
-
-    // Clean up extra spaces
-    keywordText = keywordText.replace(/\s+/g, ' ').trim();
-
-    if (keywordText.length > 1) {
-        filters.keyword = keywordText;
-        intentDescriptions.push(`Keywords: "${keywordText}"`);
-    }
 
     return {
         filters,
@@ -281,69 +299,60 @@ const naturalLanguageQuery = async (req, res) => {
             mongoQuery.department = { $regex: new RegExp(`^${filters.department}$`, 'i') };
         }
 
+        if (filters.yearOfStudy) {
+            mongoQuery.yearOfStudy = filters.yearOfStudy;
+        }
+
+        if (filters.placement) {
+            // Mapping placement intent to a field 'placement' in DB
+            mongoQuery.placement = filters.placement;
+        }
+
+        if (filters.skills) {
+            // Using $in as requested for skill filters across technical fields
+            const skillRegexes = filters.skills.map(s => new RegExp(s, 'i'));
+            mongoQuery.$or = mongoQuery.$or || [];
+            mongoQuery.$or.push(
+                { technicalSkills: { $in: skillRegexes } },
+                { programmingLanguages: { $in: skillRegexes } },
+                { interestedDomain: { $in: skillRegexes } }
+            );
+        }
+
         if (filters.placementWillingness) {
             mongoQuery.$or = mongoQuery.$or || [];
             mongoQuery.$or.push(
-                { placementWillingness: { $regex: /yes|ready|willing/i } },
-                { interestedDomain: { $exists: true, $ne: '' } }
+                { placementWillingness: { $regex: /yes|ready|willing/i } }
             );
         }
 
         if (filters.higherStudies) {
-            if (mongoQuery.$or) {
-                // Move existing $or to an $and array to avoid overwrite
-                mongoQuery.$and = [{ $or: mongoQuery.$or }];
-                delete mongoQuery.$or;
-                mongoQuery.$and.push({
-                    $or: [
-                        { higherStudies: { $regex: /yes|plan|aspir/i } },
-                        { higherStudiesDetails: { $exists: true, $ne: '' } }
-                    ]
-                });
-            } else {
-                mongoQuery.$or = [
+            const hsCondition = {
+                $or: [
                     { higherStudies: { $regex: /yes|plan|aspir/i } },
                     { higherStudiesDetails: { $exists: true, $ne: '' } }
-                ];
-            }
-        }
-
-        if (filters.keyword) {
-            const keywords = filters.keyword.split(' ').map(k => k.trim()).filter(k => k);
-            if (keywords.length > 0) {
-                const keywordRegexes = keywords.map(k => new RegExp(k, 'i'));
-                const orConditions = keywordRegexes.flatMap(regex => [
-                    { interest: regex },
-                    { hobbies: regex },
-                    { interestedDomain: regex },
-                    { programmingLanguages: regex },
-                    { technicalSkills: regex },
-                    { tools: regex },
-                    { certifications: regex },
-                    { higherStudiesDetails: regex },
-                    { sports: regex },
-                    { prefLocation: regex }
-                ]);
-
-                if (mongoQuery.$and) {
-                    mongoQuery.$and.push({ $or: orConditions });
-                } else if (mongoQuery.$or) {
-                    mongoQuery.$and = [{ $or: mongoQuery.$or }, { $or: orConditions }];
-                    delete mongoQuery.$or;
-                } else {
-                    mongoQuery.$or = orConditions;
-                }
-            }
+                ]
+            };
+            if (mongoQuery.$and) mongoQuery.$and.push(hsCondition);
+            else if (mongoQuery.$or) {
+                mongoQuery.$and = [{ $or: mongoQuery.$or }, hsCondition];
+                delete mongoQuery.$or;
+            } else mongoQuery.$or = hsCondition.$or;
         }
 
         let students = await Student.find(mongoQuery);
 
-        // Post-filter for CGPA
-        if (filters.minCgpa !== undefined) {
+        // Secondary Post-filter for CGPA (Safe for String-based CGPA)
+        if (filters.minCgpa !== undefined || filters.maxCgpa !== undefined) {
             students = students.filter(s => {
                 if (!s.cgpa) return false;
                 const sCgpa = parseFloat(s.cgpa);
-                return !isNaN(sCgpa) && sCgpa >= filters.minCgpa;
+                if (isNaN(sCgpa)) return false;
+                
+                let matches = true;
+                if (filters.minCgpa !== undefined) matches = matches && sCgpa >= filters.minCgpa;
+                if (filters.maxCgpa !== undefined) matches = matches && sCgpa <= filters.maxCgpa;
+                return matches;
             });
         }
 
