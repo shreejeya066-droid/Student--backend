@@ -187,10 +187,12 @@ const extractQueryIntent = (text) => {
     const intentDescriptions = [];
 
     // 1. Department Extractor
-    // E.g., CSE, IT, ECE, EEE, MECH, CIVIL, AIDS, AIML
-    const departments = ['cse', 'it', 'ece', 'eee', 'mech', 'civil', 'aids', 'aiml'];
+    // E.g., CS, IT, Languages, CSE, ECE, EEE, MECH, etc.
+    const departments = ['cs', 'it', 'languages', 'cse', 'ece', 'eee', 'mech', 'civil', 'aids', 'aiml'];
     for (const dept of departments) {
         if (lowerText.match(new RegExp(`\\b${dept}\\b`, 'i'))) {
+            // Mapping CS to CSE if needed, or keeping it as is. 
+            // In the frontend dropdown, value is 'CS' and 'Languages'
             filters.department = dept.toUpperCase();
             intentDescriptions.push(`Dept: ${dept.toUpperCase()}`);
             break;
