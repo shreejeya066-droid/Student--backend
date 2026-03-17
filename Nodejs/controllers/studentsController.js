@@ -178,7 +178,7 @@ const deleteStudent = async (req, res) => {
     }
 };
 
-// Helper function to extract multiple intents for compound queries
+// Helper function to extract multiple intents for compound queries (STRICT VERSION)
 const extractQueryIntent = (text) => {
     if (!text) return { filters: {}, searchField: 'None' };
 
@@ -186,8 +186,81 @@ const extractQueryIntent = (text) => {
     const filters = {};
     const intentDescriptions = [];
 
-    // 1. Department Extractor
-    const departments = ['cs', 'it', 'languages', 'cse', 'ece', 'eee', 'mech', 'civil', 'aids', 'aiml'];
+    // --- 1. NEGATIVE CONDITIONS CHECK (Placement Interest) ---
+    // Rule: Check "not" condition FIRST
+    if (lowerText.match(/not\s+(?:interested|willing)\s+(?:in\s+)?placement/i) || 
+        lowerText.match(/placement\s+(?:is\s+)?not\s+(?:preferred|interested)/i)) {
+        filters.placementInterest = false;
+        intentDescriptions.push('Not interested in placement');
+    } else if (lowerText.match(/(?:interested|willing)\s+(?:in\s+)?placement/i)) {
+        filters.placementInterest = true;
+        intentDescriptions.push('Interested in placement');
+    }
+
+    // --- 2. YEAR FILTER ---
+    // Handle both digit and word versions
+    const yearMappers = {
+        '1st': 1, 'first': 1,
+        '2nd': 2, 'second': 2,
+        '3rd': 3, 'third': 3,
+        '4th': 4, 'fourth': 4
+    };
+
+    for (const [key, val] of Object.entries(yearMappers)) {
+        if (lowerText.includes(`${key} year`)) {
+            filters.year = val;
+            intentDescriptions.push(`Year: ${val}`);
+            break;
+        }
+    }
+
+    // --- 3. CGPA FILTER (Strict Above, Below, Between) ---
+    const betweenCgpa = lowerText.match(/between\s*(\d+(\.\d+)?)\s*and\s*(\d+(\.\d+)?)/i);
+    if (betweenCgpa) {
+        filters.cgpa = { $gte: parseFloat(betweenCgpa[1]), $lte: parseFloat(betweenCgpa[3]) };
+        intentDescriptions.push(`CGPA: ${betweenCgpa[1]} to ${betweenCgpa[3]}`);
+    } else {
+        const aboveMatch = lowerText.match(/(?:above|more than|greater than|>)\s*(\d+(\.\d+)?)/i);
+        const belowMatch = lowerText.match(/(?:below|less than|smaller than|<)\s*(\d+(\.\d+)?)/i);
+        
+        if (aboveMatch || belowMatch) {
+            filters.cgpa = {};
+            if (aboveMatch) {
+                filters.cgpa.$gte = parseFloat(aboveMatch[1]);
+                intentDescriptions.push(`CGPA >= ${aboveMatch[1]}`);
+            }
+            if (belowMatch) {
+                filters.cgpa.$lt = parseFloat(belowMatch[1]);
+                intentDescriptions.push(`CGPA < ${belowMatch[1]}`);
+            }
+        }
+    }
+
+    // --- 4. SKILLS FILTER ---
+    const skillsToDetect = ['coding', 'python', 'java', 'quiz', 'web development', 'javascript'];
+    const detectedSkills = [];
+    
+    for (const skill of skillsToDetect) {
+        // Check for negative skill condition first (e.g. "not in coding")
+        const negativeRegex = new RegExp(`not\\s+(?:in|interested\\s+in|using)\\s+${skill}`, 'i');
+        if (lowerText.match(negativeRegex)) {
+            // If negative, we might want to exclude it, but for now we prioritize positive hits 
+            // as per user requirement "not in coding" check.
+            continue; 
+        }
+
+        if (lowerText.match(new RegExp(`\\b${skill}\\b`, 'i'))) {
+            detectedSkills.push(skill);
+        }
+    }
+
+    if (detectedSkills.length > 0) {
+        filters.skills = { $in: detectedSkills };
+        intentDescriptions.push(`Skills: [${detectedSkills.join(', ')}]`);
+    }
+
+    // --- 5. DEPARTMENT (Legacy but maintained) ---
+    const departments = ['cs', 'it', 'languages', 'cse', 'ece', 'eee', 'mech'];
     for (const dept of departments) {
         if (lowerText.match(new RegExp(`\\b${dept}\\b`, 'i'))) {
             filters.department = dept.toUpperCase();
@@ -196,75 +269,9 @@ const extractQueryIntent = (text) => {
         }
     }
 
-    // 2. Year Filter
-    const yearMatch = lowerText.match(/(\d+)(?:st|nd|rd|th)?\s*year/);
-    if (yearMatch) {
-        filters.yearOfStudy = parseInt(yearMatch[1]);
-        intentDescriptions.push(`Year: ${filters.yearOfStudy}`);
-    }
-
-    // 3. CGPA Extractor (Enhanced: Above, Below, Between)
-    const betweenCgpaMatch = lowerText.match(/between\s*(\d+(\.\d+)?)\s*and\s*(\d+(\.\d+)?)/i);
-    if (betweenCgpaMatch) {
-        filters.minCgpa = parseFloat(betweenCgpaMatch[1]);
-        filters.maxCgpa = parseFloat(betweenCgpaMatch[3]);
-        intentDescriptions.push(`CGPA: ${filters.minCgpa}-${filters.maxCgpa}`);
-    } else {
-        const aboveCgpaMatch = lowerText.match(/(?:above|more than|greater than|>)\s*(\d+(\.\d+)?)/i);
-        const belowCgpaMatch = lowerText.match(/(?:below|less than|smaller than|<)\s*(\d+(\.\d+)?)/i);
-        
-        if (aboveCgpaMatch) {
-            filters.minCgpa = parseFloat(aboveCgpaMatch[1]);
-            intentDescriptions.push(`CGPA > ${filters.minCgpa}`);
-        }
-        if (belowCgpaMatch) {
-            filters.maxCgpa = parseFloat(belowCgpaMatch[1]);
-            intentDescriptions.push(`CGPA < ${filters.maxCgpa}`);
-        }
-    }
-
-    // 4. Placement Status Filter
-    if (lowerText.includes('not placed')) {
-        filters.placement = 'notPlaced';
-        intentDescriptions.push('Status: Not Placed');
-    } else if (lowerText.match(/\bplaced\b/i)) {
-        filters.placement = 'placed';
-        intentDescriptions.push('Status: Placed');
-    }
-
-    // 5. Skills Extractor ($in support)
-    const skillsToDetect = ['coding', 'python', 'java', 'quiz', 'javascript', 'react', 'node'];
-    const detectedSkills = [];
-    for (const skill of skillsToDetect) {
-        if (lowerText.match(new RegExp(`\\b${skill}\\b`, 'i'))) {
-            detectedSkills.push(skill);
-        }
-    }
-    if (detectedSkills.length > 0) {
-        filters.skills = detectedSkills;
-        intentDescriptions.push(`Skills: [${detectedSkills.join(', ')}]`);
-    }
-
-    // 6. Legacy / Other
-    if (/(placement|job)\s*(ready|willing)/i.test(lowerText)) {
-        filters.placementWillingness = 'Yes';
-    }
-    if (/higher\s*(studies|education)/i.test(lowerText)) {
-        filters.higherStudies = 'Yes';
-    }
-
-    let keywordText = lowerText
-        .replace(/(\d+)(?:st|nd|rd|th)?\s*year/g, '')
-        .replace(/between\s*\d+(\.\d+)?\s*and\s*\d+(\.\d+)?/gi, '')
-        .replace(/(?:above|more than|greater than|below|less than|smaller than|>|<)\s*\d+(\.\d+)?/gi, '')
-        .replace(/not\s*placed/gi, '')
-        .replace(/\bplaced\b/gi, '')
-        .replace(/\b(show|me|students|who|are|is|in|from|with|have|has|know|knows|interested|interest|expert|proficient|good at|using|developer|and|the)\b/gi, ' ')
-        .trim();
-
     return {
         filters,
-        searchField: intentDescriptions.length > 0 ? intentDescriptions.join(' + ') : 'General Search',
+        searchField: intentDescriptions.length > 0 ? intentDescriptions.join(' + ') : 'Strict Filter',
         raw: text
     };
 };
@@ -281,86 +288,51 @@ const naturalLanguageQuery = async (req, res) => {
         const intent = extractQueryIntent(query);
         const { filters, searchField } = intent;
 
-        console.log(`Debug: Query="${query}", Extracted=`, filters);
-
-        if (Object.keys(filters).length === 0) {
-            return res.status(200).json({
-                meta: { original_query: query, count: 0 },
-                data: [],
-                message: "Could not understand query. Try 'java experts in CSE', 'placement ready', 'higher studies', or 'cgpa above 8.0'"
-            });
-        }
-
-        // Build MongoDB Query Object based on extracted filters
+        // Build MongoDB Query Object strictly based on requirements
         const mongoQuery = {};
 
-        // Apply filters
+        // 1. Strict Year Filter
+        if (filters.year !== undefined) {
+            mongoQuery.year = filters.year;
+        }
+
+        // 2. Strict CGPA Filter
+        if (filters.cgpa) {
+            mongoQuery.cgpa = filters.cgpa;
+        }
+
+        // 3. Strict Placement Interest Filter
+        if (filters.placementInterest !== undefined) {
+            mongoQuery.placementInterest = filters.placementInterest;
+        }
+
+        // 4. Strict Skills Filter ($in)
+        if (filters.skills) {
+            mongoQuery.skills = filters.skills;
+        }
+
+        // 5. Department Filter (Legacy support)
         if (filters.department) {
             mongoQuery.department = { $regex: new RegExp(`^${filters.department}$`, 'i') };
         }
 
-        if (filters.yearOfStudy) {
-            mongoQuery.yearOfStudy = filters.yearOfStudy;
-        }
+        console.log("Final Filter:", mongoQuery);
 
-        if (filters.placement) {
-            // Mapping placement intent to a field 'placement' in DB
-            mongoQuery.placement = filters.placement;
-        }
-
-        if (filters.skills) {
-            // Using $in as requested for skill filters across technical fields
-            const skillRegexes = filters.skills.map(s => new RegExp(s, 'i'));
-            mongoQuery.$or = mongoQuery.$or || [];
-            mongoQuery.$or.push(
-                { technicalSkills: { $in: skillRegexes } },
-                { programmingLanguages: { $in: skillRegexes } },
-                { interestedDomain: { $in: skillRegexes } }
-            );
-        }
-
-        if (filters.placementWillingness) {
-            mongoQuery.$or = mongoQuery.$or || [];
-            mongoQuery.$or.push(
-                { placementWillingness: { $regex: /yes|ready|willing/i } }
-            );
-        }
-
-        if (filters.higherStudies) {
-            const hsCondition = {
-                $or: [
-                    { higherStudies: { $regex: /yes|plan|aspir/i } },
-                    { higherStudiesDetails: { $exists: true, $ne: '' } }
-                ]
-            };
-            if (mongoQuery.$and) mongoQuery.$and.push(hsCondition);
-            else if (mongoQuery.$or) {
-                mongoQuery.$and = [{ $or: mongoQuery.$or }, hsCondition];
-                delete mongoQuery.$or;
-            } else mongoQuery.$or = hsCondition.$or;
-        }
-
-        let students = await Student.find(mongoQuery);
-
-        // Secondary Post-filter for CGPA (Safe for String-based CGPA)
-        if (filters.minCgpa !== undefined || filters.maxCgpa !== undefined) {
-            students = students.filter(s => {
-                if (!s.cgpa) return false;
-                const sCgpa = parseFloat(s.cgpa);
-                if (isNaN(sCgpa)) return false;
-                
-                let matches = true;
-                if (filters.minCgpa !== undefined) matches = matches && sCgpa >= filters.minCgpa;
-                if (filters.maxCgpa !== undefined) matches = matches && sCgpa <= filters.maxCgpa;
-                return matches;
+        // Handle case where NO filters are matched
+        if (Object.keys(mongoQuery).length === 0) {
+            return res.status(200).json({
+                meta: { original_query: query, count: 0 },
+                data: [],
+                message: "No specific filters detected. Try '3rd year students with cgpa above 8.5'"
             });
         }
+
+        const students = await Student.find(mongoQuery);
 
         res.status(200).json({
             meta: {
                 original_query: query,
-                extracted_keyword: searchField,
-                extracted_intent: filters,
+                extracted_intent: searchField,
                 count: students.length
             },
             data: students
