@@ -198,16 +198,17 @@ const extractQueryIntent = (text) => {
     }
 
     // --- 2. YEAR FILTER ---
-    // Handle both digit and word versions
     const yearMappers = {
-        '1st': 1, 'first': 1,
-        '2nd': 2, 'second': 2,
-        '3rd': 3, 'third': 3,
-        '4th': 4, 'fourth': 4
+        '1st': 1, 'first': 1, '1': 1,
+        '2nd': 2, 'second': 2, '2': 2,
+        '3rd': 3, 'third': 3, '3': 3,
+        '4th': 4, 'fourth': 4, '4': 4
     };
 
     for (const [key, val] of Object.entries(yearMappers)) {
-        if (lowerText.includes(`${key} year`)) {
+        // Match "1st year", "1 year", "year 1", etc.
+        const yearRegex = new RegExp(`\\b${key}\\b\\s*year|year\\s*\\b${key}\\b`, 'i');
+        if (yearRegex.test(lowerText)) {
             filters.year = val;
             intentDescriptions.push(`Year: ${val}`);
             break;
