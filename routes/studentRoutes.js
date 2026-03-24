@@ -43,6 +43,8 @@ router.get('/:rollNumber', studentsController.getStudentProfile);
 router.put('/:rollNumber', studentsController.updateStudentProfile);
 router.delete('/:rollNumber', studentsController.deleteStudent);
 // Password Recovery Routes
+router.post('/forgot-password', studentsController.forgotPassword);
+router.post('/reset-password', studentsController.resetPassword);
 router.post('/send-otp', otpController.sendOTP);
 router.post('/verify-otp', otpController.verifyOTP);
 

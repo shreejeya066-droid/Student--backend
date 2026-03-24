@@ -124,7 +124,7 @@ const loginTeacher = async (req, res) => {
 // Get all teachers
 const getAllTeachers = async (req, res) => {
     try {
-        const teachers = await Teacher.find();
+        const teachers = await Teacher.find().select('-password');
         res.status(200).json(teachers);
     } catch (error) {
         res.status(500).json({ message: error.message });
