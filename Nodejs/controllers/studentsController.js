@@ -1,4 +1,7 @@
 const Student = require('../modules/studentModel');
+const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
+const nodemailer = require('nodemailer');
 
 // Login Student
 const loginStudent = async (req, res) => {
@@ -412,6 +415,116 @@ const getPowerBIData = async (req, res) => {
     }
 };
 
+// --- Forgot Password Flow ---
+
+// 1. Send Reset Email Link
+const forgotPassword = async (req, res) => {
+    try {
+        const { email } = req.body;
+
+        // Check if student exists with this email
+        const student = await Student.findOne({ email });
+
+        // Generic response to avoid revealing email existence for security
+        const genericMessage = "If this email is registered, a reset link has been sent.";
+
+        if (!student) {
+            return res.json({ message: genericMessage });
+        }
+
+        // Generate Token
+        const resetToken = crypto.randomBytes(20).toString('hex');
+
+        // Set Token and Expiry (15 minutes)
+        student.resetPasswordToken = resetToken;
+        student.resetPasswordExpire = Date.now() + 15 * 60 * 1000;
+
+        await student.save();
+
+        // Send Email (Placeholder Configuration)
+        // For production, the user needs to provide REAL SMTP credentials in .env
+        const transporter = nodemailer.createTransport({
+            service: 'gmail',
+            auth: {
+                user: process.env.EMAIL_USER || 'placeholder@gmail.com',
+                pass: process.env.EMAIL_PASS || 'placeholder_pass'
+            }
+        });
+
+        const resetUrl = `${req.get('origin') || 'http://localhost:3000'}/reset-password?token=${resetToken}`;
+
+        const mailOptions = {
+            from: process.env.EMAIL_USER || '"Support" <placeholder@gmail.com>',
+            to: student.email,
+            subject: 'Password Reset Request',
+            text: `Click the link below to reset your password. This link expires in 15 minutes.\n\n${resetUrl}`,
+            html: `
+                <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #ddd; border-top: 4px solid #4f46e5; border-radius: 8px;">
+                    <h2 style="color: #4f46e5;">Password Reset Request</h2>
+                    <p>We received a request to reset the password for your student account associated with this email address.</p>
+                    <p>Click the button below to set a new password. If you didn't request this, you can ignore this email.</p>
+                    <a href="${resetUrl}" style="display: inline-block; padding: 12px 24px; background-color: #4f46e5; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; margin: 20px 0;">Reset Password</a>
+                    <p style="color: #666; font-size: 14px;">This link will expire in 15 minutes.</p>
+                </div>
+            `
+        };
+
+        // In development/mock mode, we might not actually send but we log it
+        try {
+            await transporter.sendMail(mailOptions);
+        } catch (mailError) {
+            console.warn("Email send failed (likely placeholder credentials):", mailError.message);
+            // We don't fail the request here so the user gets the message, but in production this should be handled.
+            // For now, return the token in response for EASY TESTING if no email is set up
+            if (!process.env.EMAIL_USER) {
+                 return res.json({ 
+                    message: genericMessage + " (DEBUG: Email not configured. Token is in response)", 
+                    debugToken: resetToken 
+                 });
+            }
+        }
+
+        res.json({ message: genericMessage });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+// 2. Validate Token and Reset Password
+const resetPassword = async (req, res) => {
+    try {
+        const { token, password } = req.body;
+
+        if (!token || !password) {
+            return res.status(400).json({ message: 'Token and new password are required' });
+        }
+
+        // Find student by valid token and non-expired time
+        const student = await Student.findOne({
+            resetPasswordToken: token,
+            resetPasswordExpire: { $gt: Date.now() }
+        });
+
+        if (!student) {
+            return res.status(400).json({ message: 'Invalid or expired link' });
+        }
+
+        // Hash new password
+        const salt = await bcrypt.genSalt(10);
+        student.password = await bcrypt.hash(password, salt);
+
+        // Clear reset fields
+        student.resetPasswordToken = undefined;
+        student.resetPasswordExpire = undefined;
+
+        await student.save();
+
+        res.json({ message: 'Password reset successful. You can now login with your new password.', success: true });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
 module.exports = {
     loginStudent,
     registerStudent,
@@ -422,5 +535,7 @@ module.exports = {
     naturalLanguageQuery,
     getAnalytics,
     getPowerBIData,
-    checkStudentStatus
+    checkStudentStatus,
+    forgotPassword,
+    resetPassword
 };
