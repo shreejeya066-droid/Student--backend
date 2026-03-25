@@ -455,15 +455,22 @@ const forgotPassword = async (req, res) => {
         const transporter = nodemailer.createTransport({
             service: 'gmail',
             auth: {
-                user: process.env.EMAIL_USER || 'placeholder@gmail.com',
-                pass: process.env.EMAIL_PASS || 'placeholder_pass'
-            }
+                user: process.env.EMAIL_USER,
+                pass: process.env.EMAIL_PASS
+            },
+            connectionTimeout: 10000, // 10 seconds
+            greetingTimeout: 10000,
+            socketTimeout: 15000,
+            debug: true
         });
 
         const resetUrl = `${req.get('origin') || 'http://localhost:3000'}/reset-password?token=${resetToken}`;
+        
+        console.log(`Sending password reset email to: ${student.email}`);
+        console.log(`Reset Token: ${resetToken}`);
 
         const mailOptions = {
-            from: process.env.EMAIL_USER || '"Support" <placeholder@gmail.com>',
+            from: process.env.EMAIL_USER,
             to: student.email,
             subject: 'Password Reset Request',
             text: `Click the link below to reset your password. This link expires in 15 minutes.\n\n${resetUrl}`,
@@ -480,9 +487,12 @@ const forgotPassword = async (req, res) => {
 
         // In development/mock mode, we might not actually send but we log it
         try {
-            await transporter.sendMail(mailOptions);
+            const info = await transporter.sendMail(mailOptions);
+            console.log("Email sent successfully!", info.messageId);
         } catch (mailError) {
-            console.warn("Email send failed:", mailError.message);
+            console.error("Email send failed! Logging error details...");
+            console.error(mailError);
+            
             // Return BOTH error message AND token for easy debugging in this phase
             return res.json({ 
                 message: genericMessage + " (DEBUG: Email send failed: " + mailError.message + ")", 

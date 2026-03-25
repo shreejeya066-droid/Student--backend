@@ -30,6 +30,13 @@ startServer();
 app.use(cors()); // Enable CORS to allow requests from frontend
 app.use(express.json()); // Parse JSON bodies
 
+// Simple Logger to track incoming requests
+app.use((req, res, next) => {
+    console.log(`[${new Date().toLocaleTimeString()}] ${req.method} ${req.url}`);
+    if (req.method === 'POST') console.log('Body:', req.body);
+    next();
+});
+
 // Routes
 app.use('/api/students', studentRoutes);
 app.use('/api/teachers', teacherRoutes);
