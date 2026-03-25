@@ -40,6 +40,7 @@ app.use((req, res, next) => {
 // Routes
 app.use('/api/students', studentRoutes);
 app.use('/api/teachers', teacherRoutes);
+app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/admin', require('./routes/adminRoutes'));
 app.use('/api/settings', require('./routes/systemSettingsRoutes'));
 app.use('/api/powerbi', require('./routes/powerbiRoutes'));
