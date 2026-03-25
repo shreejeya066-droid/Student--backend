@@ -11,7 +11,14 @@ const loginStudent = async (req, res) => {
         // Find by roll number
         const student = await Student.findOne({ rollNumber });
 
-        if (student && student.password === password) {
+        if (!student) {
+            return res.status(404).json({ message: 'Student not found' });
+        }
+
+        // Support both plain text (legacy) and bcrypt hashed passwords
+        const isMatch = student.password === password || await bcrypt.compare(password, student.password);
+
+        if (isMatch) {
             res.json({
                 _id: student._id,
                 rollNumber: student.rollNumber,
@@ -21,9 +28,6 @@ const loginStudent = async (req, res) => {
                 role: 'student'
             });
         } else {
-            // Check if user exists but wrong password, or user doesn't exist
-            // For now specific message
-            if (!student) return res.status(404).json({ message: 'Student not found' });
             res.status(401).json({ message: 'Invalid credentials' });
         }
     } catch (error) {
@@ -67,7 +71,8 @@ const registerStudent = async (req, res) => {
             }
 
             // If student exists but has NO password (pre-seeded), we activate them
-            student.password = password;
+            const salt = await bcrypt.genSalt(10);
+            student.password = await bcrypt.hash(password, salt);
             student.isFirstLogin = false; // Mark as activated
 
             // Update other fields if provided (e.g. self-registration data for pre-seeded user)
@@ -92,9 +97,12 @@ const registerStudent = async (req, res) => {
         }
 
         // Case 2: New Student (Create from scratch)
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(password, salt);
+        
         const newStudent = await Student.create({
             rollNumber,
-            password,
+            password: hashedPassword,
             isFirstLogin: false, // They just created their password, so they are active
             firstName,
             lastName,
