@@ -482,15 +482,12 @@ const forgotPassword = async (req, res) => {
         try {
             await transporter.sendMail(mailOptions);
         } catch (mailError) {
-            console.warn("Email send failed (likely placeholder credentials):", mailError.message);
-            // We don't fail the request here so the user gets the message, but in production this should be handled.
-            // For now, return the token in response for EASY TESTING if no email is set up
-            if (!process.env.EMAIL_USER) {
-                 return res.json({ 
-                    message: genericMessage + " (DEBUG: Email not configured. Token is in response)", 
-                    debugToken: resetToken 
-                 });
-            }
+            console.warn("Email send failed:", mailError.message);
+            // Return BOTH error message AND token for easy debugging in this phase
+            return res.json({ 
+                message: genericMessage + " (DEBUG: Email send failed: " + mailError.message + ")", 
+                debugToken: resetToken 
+            });
         }
 
         res.json({ message: genericMessage });
