@@ -2,12 +2,9 @@ const express = require('express');
 const router = express.Router();
 const studentsController = require('../controllers/studentsController');
 
-// Password Recovery Routes (Matching strict requirements)
+// Password Recovery Routes (OTP Based)
 router.post('/forgot-password', studentsController.forgotPassword);
-router.post('/reset-password/:token', (req, res) => {
-    // Adapter to pass token from params to body as expected by the controller
-    req.body.token = req.params.token;
-    studentsController.resetPassword(req, res);
-});
+router.post('/verify-otp', studentsController.verifyOTP);
+router.post('/reset-password', studentsController.resetPassword);
 
 module.exports = router;

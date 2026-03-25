@@ -424,28 +424,29 @@ const getPowerBIData = async (req, res) => {
     }
 };
 
-// --- Forgot Password Flow ---
+// --- OTP Password Reset Flow ---
 
+// 1. Send OTP to Email
 const forgotPassword = async (req, res) => {
     try {
         const { email } = req.body;
 
-        // Check if student exists with this email
+        // Check if student exists
         const student = await Student.findOne({ email });
 
-        // Generic response for security (always show same message)
-        const genericMessage = "If this email is registered, a reset link has been sent.";
+        // Generic response for security
+        const genericMessage = "If the email is registered, OTP has been sent.";
 
         if (!student) {
             return res.json({ message: genericMessage });
         }
 
-        // Generate Secure Token
-        const resetToken = crypto.randomBytes(20).toString('hex');
+        // Generate 6-digit OTP
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
-        // Set Token and Expiry (15 minutes)
-        student.resetToken = resetToken;
-        student.resetTokenExpiry = Date.now() + 15 * 60 * 1000;
+        // Set OTP and Expiry (5 minutes)
+        student.otp = otp;
+        student.otpExpiry = Date.now() + 5 * 60 * 1000;
 
         await student.save();
 
@@ -458,30 +459,18 @@ const forgotPassword = async (req, res) => {
             }
         });
 
-        const resetUrl = `${process.env.CLIENT_URL || req.get('origin') || 'http://localhost:3000'}/reset-password?token=${resetToken}`;
-        
         const mailOptions = {
             from: process.env.EMAIL_USER,
             to: student.email,
-            subject: 'Password Reset Request',
-            html: `
-                <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #ddd; border-top: 4px solid #4f46e5; border-radius: 8px;">
-                    <h2 style="color: #4f46e5;">Password Reset Request</h2>
-                    <p>We received a request to reset the password for your student account.</p>
-                    <p>Click the button below to set a new password. This link will expire in 15 minutes.</p>
-                    <a href="${resetUrl}" style="display: inline-block; padding: 12px 24px; background-color: #4f46e5; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; margin: 20px 0;">Reset Password</a>
-                    <p style="color: #666; font-size: 14px;">If you didn't request this, you can safely ignore this email.</p>
-                </div>
-            `
+            subject: 'Your OTP for Password Reset',
+            text: `Your OTP for password reset is: ${otp}`
         };
 
         try {
             await transporter.sendMail(mailOptions);
-            console.log(`Password reset email sent to: ${student.email}`);
+            console.log(`Password reset OTP sent to: ${student.email}`);
         } catch (mailError) {
             console.error("Email send failed:", mailError.message);
-            // Even if mail fails, we return the generic message to avoid security leaks
-            // though we could log it for the admin.
         }
 
         res.json({ message: genericMessage });
@@ -490,32 +479,58 @@ const forgotPassword = async (req, res) => {
     }
 };
 
-// 2. Validate Token and Reset Password
-const resetPassword = async (req, res) => {
+// 2. Verify OTP
+const verifyOTP = async (req, res) => {
     try {
-        const { token, password } = req.body;
+        const { email, otp } = req.body;
 
-        if (!token || !password) {
-            return res.status(400).json({ message: 'Token and new password are required' });
+        if (!email || !otp) {
+            return res.status(400).json({ message: 'Email and OTP are required' });
         }
 
-        // Find student by valid token and non-expired time
         const student = await Student.findOne({
-            resetToken: token,
-            resetTokenExpiry: { $gt: Date.now() }
+            email,
+            otp,
+            otpExpiry: { $gt: Date.now() }
         });
 
         if (!student) {
-            return res.status(400).json({ message: 'Invalid or expired link' });
+            return res.status(400).json({ message: 'Invalid OTP or expired' });
+        }
+
+        res.json({ message: 'OTP verified successfully', success: true });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+// 3. Reset Password
+const resetPassword = async (req, res) => {
+    try {
+        const { email, otp, password } = req.body;
+
+        if (!email || !otp || !password) {
+            return res.status(400).json({ message: 'Email, OTP, and new password are required' });
+        }
+
+        // Find student and verify OTP again to be sure
+        const student = await Student.findOne({
+            email,
+            otp,
+            otpExpiry: { $gt: Date.now() }
+        });
+
+        if (!student) {
+            return res.status(400).json({ message: 'Action unauthorized or session expired' });
         }
 
         // Hash new password
         const salt = await bcrypt.genSalt(10);
         student.password = await bcrypt.hash(password, salt);
 
-        // Clear reset fields
-        student.resetToken = undefined;
-        student.resetTokenExpiry = undefined;
+        // Clear OTP fields
+        student.otp = undefined;
+        student.otpExpiry = undefined;
 
         await student.save();
 
@@ -537,5 +552,6 @@ module.exports = {
     getPowerBIData,
     checkStudentStatus,
     forgotPassword,
+    verifyOTP,
     resetPassword
 };

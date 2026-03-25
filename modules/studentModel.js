@@ -86,9 +86,9 @@ const studentSchema = mongoose.Schema({
     attendance: { type: Number },
     interest: { type: String }, // Field for natural language search
     
-    // Password Recovery
-    resetToken: { type: String },
-    resetTokenExpiry: { type: Date },
+    // Password Recovery (OTP based)
+    otp: { type: String },
+    otpExpiry: { type: Date },
 }, {
     timestamps: true
 });
