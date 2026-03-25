@@ -55,4 +55,9 @@ app.get('/', (req, res) => {
     res.send('Backend is running!');
 });
 
+// Version Check (DEBUG)
+app.get('/api/version', (req, res) => {
+    res.json({ version: "1.2 - Email Recovery Active" });
+});
+
 
