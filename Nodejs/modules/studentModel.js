@@ -87,8 +87,8 @@ const studentSchema = mongoose.Schema({
     interest: { type: String }, // Field for natural language search
     
     // Password Recovery
-    resetPasswordToken: { type: String },
-    resetPasswordExpire: { type: Date },
+    resetToken: { type: String },
+    resetTokenExpiry: { type: Date },
 }, {
     timestamps: true
 });
