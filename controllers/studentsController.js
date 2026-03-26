@@ -245,86 +245,95 @@ const naturalLanguageQuery = async (req, res) => {
         const nlp = extractQueryIntent(query);
         const { filters, keywords } = nlp;
 
-        // DEBUG LOGS
-        console.log("------------------- HYBRID SMART SEARCH -------------------");
-        console.log("INPUT:", query || "None");
-        console.log("UI FILTERS:", { year, cgpa, placement, skill });
+        // DB Health Check (Helpful for debugging '0 results')
+        const totalInDb = await Student.countDocuments();
 
         // helper for adding filters
         const buildAndArray = (uiFilters, nlpFilters, searchKeywords) => {
             const arr = [];
             
-            // a. UI FILTERS (Priority)
-            if (uiFilters.year && uiFilters.year !== 'All') arr.push({ yearOfStudy: parseInt(uiFilters.year) });
-            if (uiFilters.cgpa && uiFilters.cgpa !== 'All') arr.push({ cgpa: { $gte: parseFloat(uiFilters.cgpa) } });
+            // a. Structured Filters
+            const targetYear = uiFilters.year !== 'All' ? parseInt(uiFilters.year) : nlpFilters.yearOfStudy;
+            if (targetYear) arr.push({ yearOfStudy: targetYear });
+
+            const minCgpa = uiFilters.cgpa !== 'All' ? parseFloat(uiFilters.cgpa) : (nlpFilters.cgpa ? nlpFilters.cgpa.$gte : null);
+            if (minCgpa) {
+                // Use $expr and $toDouble to handle potential stringified CGPA in DB
+                arr.push({
+                    $expr: { $gte: [{ $toDouble: "$cgpa" }, minCgpa] }
+                });
+            }
+
             if (uiFilters.placement && uiFilters.placement !== 'All') {
                 const pVal = uiFilters.placement === 'Willing' || uiFilters.placement === 'Yes' || uiFilters.placement === 'Interested' ? /yes/i : /no/i;
                 arr.push({ placementWillingness: { $regex: pVal } });
             }
+
             if (uiFilters.skill && uiFilters.skill !== 'All') {
                 arr.push({
                     $or: [
                         { skills: { $regex: new RegExp(uiFilters.skill, 'i') } },
-                        { technicalSkills: { $regex: new RegExp(uiFilters.skill, 'i') } },
-                        { programmingLanguages: { $regex: new RegExp(uiFilters.skill, 'i') } }
+                        { technicalSkills: { $regex: new RegExp(uiFilters.skill, 'i') } }
                     ]
                 });
             }
 
-            // b. NLP FILTERS (Parsed Intents)
-            if (nlpFilters.yearOfStudy) arr.push({ yearOfStudy: nlpFilters.yearOfStudy });
-            if (nlpFilters.cgpa) arr.push({ cgpa: nlpFilters.cgpa });
-
-            // c. COMPREHENSIVE KEYWORD SEARCH (Broad Fallback)
+            // b. Content Keywords
             if (query && query.trim()) {
-                const words = query.trim().split(/\s+/);
-                const keywordRegex = new RegExp(words.join('|'), 'i');
-                const fullQueryRegex = new RegExp(query.trim(), 'i');
-
+                const searchRegex = new RegExp(query.trim().split(/\s+/).join('|'), 'i');
                 arr.push({
                     $or: [
-                        { firstName: keywordRegex }, { lastName: keywordRegex }, { rollNumber: keywordRegex },
-                        { firstName: fullQueryRegex }, { lastName: fullQueryRegex }, // Whole phrase matches
-                        { skills: keywordRegex }, { technicalSkills: keywordRegex }, { technicalSkill: keywordRegex },
-                        { hobbies: keywordRegex }, { hobby: keywordRegex }, // Plural and singular
-                        { interest: keywordRegex }, { interests: keywordRegex },
-                        { achievements: keywordRegex }, { certifications: keywordRegex },
-                        { programmingLanguages: keywordRegex }, { tools: keywordRegex },
-                        { internshipCompany: keywordRegex }, { address: keywordRegex }
+                        { firstName: searchRegex }, { lastName: searchRegex }, { rollNumber: searchRegex },
+                        { skills: searchRegex }, { technicalSkills: searchRegex }, { technicalSkill: searchRegex },
+                        { hobbies: searchRegex }, { hobby: searchRegex }, { interest: searchRegex }, { interests: searchRegex },
+                        { achievements: searchRegex }, { certifications: searchRegex }, { programmingLanguages: searchRegex },
+                        { internshipCompany: searchRegex }, { address: searchRegex }, { email: searchRegex }
                     ]
                 });
             }
             return arr;
         };
 
-        const strictQuery = buildAndArray({ year, cgpa, placement, skill }, filters, keywords);
-        let finalQueryObject = strictQuery.length > 0 ? { $and: strictQuery } : {};
+        // Execution Level 1: Strict Hybrid Search
+        const strictArr = buildAndArray({ year, cgpa, placement, skill }, filters, keywords);
+        let students = await Student.find(strictArr.length > 0 ? { $and: strictArr } : {});
 
-        let students = await Student.find(finalQueryObject);
-
-        // RELAXED FALLBACK (If Strict search returns 0 and we have UI filters active)
-        if (students.length === 0 && (year !== 'All' || cgpa !== 'All' || placement !== 'All' || skill !== 'All') && query) {
-            console.log("No strictly matching students. Retrying with keyword search ONLY...");
-            const relaxedQuery = buildAndArray({ year: 'All', cgpa: 'All', placement: 'All', skill: 'All' }, filters, keywords);
-            const fallbackQuery = relaxedQuery.length > 0 ? { $and: relaxedQuery } : {};
-            students = await Student.find(fallbackQuery);
+        // Execution Level 2: Relaxed Search (Ignore UI Dropdowns)
+        if (students.length === 0 && query && (year !== 'All' || cgpa !== 'All' || placement !== 'All' || skill !== 'All')) {
+            console.log("Strict search 0. Retrying relaxed search...");
+            const relaxedArr = buildAndArray({ year: 'All', cgpa: 'All', placement: 'All', skill: 'All' }, filters, keywords);
+            students = await Student.find(relaxedArr.length > 0 ? { $and: relaxedArr } : {});
         }
 
-        // Populate metadata for UI
-        const extractedKeyword = keywords.length > 0 ? keywords.join(', ') : query;
+        // Execution Level 3: AGGRESSIVE UNIVERSAL SEARCH (If everything else fails)
+        if (students.length === 0 && query) {
+            console.log("Relaxed search 0. Retrying AGGRESSIVE universal search...");
+            const aggressiveRegex = new RegExp(query.trim().split(/\s+/).filter(w => w.length > 2).join('|'), 'i');
+            if (aggressiveRegex.toString() !== '/(?:)/i') {
+                students = await Student.find({
+                    $or: [
+                        { firstName: aggressiveRegex }, { lastName: aggressiveRegex }, { rollNumber: aggressiveRegex },
+                        { skills: aggressiveRegex }, { technicalSkills: aggressiveRegex }, { technicalSkill: aggressiveRegex },
+                        { hobbies: aggressiveRegex }, { hobby: aggressiveRegex }, { interest: aggressiveRegex }, { interests: aggressiveRegex },
+                        { address: aggressiveRegex }, { certifications: aggressiveRegex }
+                    ]
+                }).limit(20);
+            }
+        }
 
         res.status(200).json({
             meta: {
                 original_query: query || "None",
-                extracted_keyword: extractedKeyword || "Smart Search",
-                count: students.length
+                extracted_keyword: keywords.join(', ') || query || "Smart Search",
+                count: students.length,
+                dbStatus: totalInDb > 0 ? `Connected (${totalInDb} students in DB)` : "Empty DB"
             },
             data: students
         });
 
     } catch (error) {
         console.error('NLP Search Error:', error);
-        res.status(500).json({ message: 'Dynamic search update failed. Reverting to basic mode.' });
+        res.status(500).json({ message: 'Search system is experiencing heavy load. Please refine your query.' });
     }
 };
 
