@@ -246,71 +246,67 @@ const naturalLanguageQuery = async (req, res) => {
         const nlp = extractQueryIntent(query);
         const { filters, keywords } = nlp;
 
-        // DEBUG LOGS (Mandatory)
+        // DEBUG LOGS
         console.log("------------------- HYBRID SMART SEARCH -------------------");
         console.log("Input:", query || "None");
-        console.log("NLP Filters:", filters);
         console.log("UI Filters:", { year, cgpa, placement, skill });
 
-        // 2. INTEGRATE UI FILTERS (Always Priority, skip if 'All')
-        if (year && year !== 'All') {
-            andQueryArray.push({ yearOfStudy: parseInt(year) });
-        }
-        if (cgpa && cgpa !== 'All') {
-            andQueryArray.push({ cgpa: { $gte: parseFloat(cgpa) } });
-        }
-        if (placement && placement !== 'All') {
-            const pVal = placement === 'Willing' || placement === 'Yes' ? /yes/i : /no/i;
-            andQueryArray.push({ placementWillingness: { $regex: pVal } });
-        }
-        if (skill && skill !== 'All') {
-            andQueryArray.push({
-                $or: [
-                    { skills: { $regex: new RegExp(skill, 'i') } },
-                    { technicalSkills: { $regex: new RegExp(skill, 'i') } },
-                    { programmingLanguages: { $regex: new RegExp(skill, 'i') } }
-                ]
-            });
-        }
+        // helper for adding filters
+        const buildAndArray = (uiFilters, nlpFilters, searchKeywords) => {
+            const arr = [];
+            // UI
+            if (uiFilters.year && uiFilters.year !== 'All') arr.push({ yearOfStudy: parseInt(uiFilters.year) });
+            if (uiFilters.cgpa && uiFilters.cgpa !== 'All') arr.push({ cgpa: { $gte: parseFloat(uiFilters.cgpa) } });
+            if (uiFilters.placement && uiFilters.placement !== 'All') {
+                const pVal = uiFilters.placement === 'Willing' || uiFilters.placement === 'Yes' || uiFilters.placement === 'Interested' ? /yes/i : /no/i;
+                arr.push({ placementWillingness: { $regex: pVal } });
+            }
+            if (uiFilters.skill && uiFilters.skill !== 'All') {
+                arr.push({
+                    $or: [
+                        { skills: { $regex: new RegExp(uiFilters.skill, 'i') } },
+                        { technicalSkills: { $regex: new RegExp(uiFilters.skill, 'i') } },
+                        { programmingLanguages: { $regex: new RegExp(uiFilters.skill, 'i') } }
+                    ]
+                });
+            }
+            // NLP
+            if (nlpFilters.yearOfStudy) arr.push({ yearOfStudy: nlpFilters.yearOfStudy });
+            if (nlpFilters.cgpa) arr.push({ cgpa: nlpFilters.cgpa });
 
-        // 3. INTEGRATE NLP FILTERS (Merged)
-        if (filters.yearOfStudy) {
-            andQueryArray.push({ yearOfStudy: filters.yearOfStudy });
+            // Keywords
+            if (query && query.trim()) {
+                const regex = new RegExp(query.trim().split(/\s+/).join('|'), 'i');
+                arr.push({
+                    $or: [
+                        { firstName: regex }, { lastName: regex }, { rollNumber: regex },
+                        { skills: regex }, { technicalSkills: regex },
+                        { hobbies: regex }, { interest: regex }, { interests: regex },
+                        { achievements: regex }
+                    ]
+                });
+            }
+            return arr;
+        };
+
+        const strictQuery = buildAndArray({ year, cgpa, placement, skill }, filters, keywords);
+        let finalQuery = strictQuery.length > 0 ? { $and: strictQuery } : {};
+
+        let students = await Student.find(finalQuery);
+
+        // RELAXED SEARCH FALLBACK
+        // If query exist and filters are present but results are 0, try searching without UI filters
+        if (students.length === 0 && (year !== 'All' || cgpa !== 'All' || placement !== 'All' || skill !== 'All') && query) {
+            console.log("Strict Search returned 0. Retrying relaxed search (Ignoring UI Dropdowns)...");
+            const relaxedQuery = buildAndArray({ year: 'All', cgpa: 'All', placement: 'All', skill: 'All' }, filters, keywords);
+            const fallbackQuery = relaxedQuery.length > 0 ? { $and: relaxedQuery } : {};
+            students = await Student.find(fallbackQuery);
         }
-        if (filters.cgpa) {
-            andQueryArray.push({ cgpa: filters.cgpa });
-        }
-
-        // 4. KEYWORD SEARCH (Broad Compatibility - Old & New Fields)
-        if (query && query.trim().length > 0) {
-            const keywordRegex = new RegExp(query.trim().split(/\s+/).join('|'), 'i');
-            andQueryArray.push({
-                $or: [
-                    { firstName: keywordRegex },
-                    { lastName: keywordRegex },
-                    { rollNumber: keywordRegex },
-                    { skills: keywordRegex }, // New Field Name
-                    { technicalSkills: keywordRegex }, // Old Field Name
-                    { hobbies: keywordRegex },
-                    { interest: keywordRegex }, // Old Field Name
-                    { interests: keywordRegex }, // New Field Name
-                    { achievements: keywordRegex },
-                    { email: keywordRegex }
-                ]
-            });
-        }
-
-        // 5. FINAL QUERY CONSTRUCTION
-        let finalQuery = andQueryArray.length > 0 ? { $and: andQueryArray } : {};
-
-        console.log("Final Query:", JSON.stringify(finalQuery, null, 2));
-        console.log("-----------------------------------------------------------");
-
-        const students = await Student.find(finalQuery);
 
         res.status(200).json({
             meta: {
                 original_query: query || "None",
+                extracted_keyword: keywords.join(', ') || query || "General Search",
                 count: students.length
             },
             data: students
