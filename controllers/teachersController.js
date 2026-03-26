@@ -92,17 +92,25 @@ const setupTeacherPassword = async (req, res) => {
 const loginTeacher = async (req, res) => {
     try {
         const { email, password } = req.body;
+        console.log(`[AUTH] Teacher login attempt: ${email}`);
 
         // Check for teacher email or username
         const teacher = await Teacher.findOne({
             $or: [{ email: email }, { username: email }]
         });
 
-        if (teacher && teacher.password === password) {
-            // Check if profile is complete (e.g. mobile and Qualification/Experience are set) - Qualification is not in schema yet but Mobile is.
-            // Let's assume Mobile and Name are critical.
-            // Wait, we need to modify schema to store 'qualification' if we want to enforce it.
-            // For now, let's just check 'mobile'.
+        if (!teacher) {
+            console.warn(`[AUTH] Login failed: Teacher not found (${email})`);
+            return res.status(401).json({ message: 'Teacher account not found' });
+        }
+
+        // Support both plain text (legacy/admin creation) and hashed password 
+        // (Just like the Student controller does for flexibility)
+        const bcrypt = require('bcryptjs');
+        const isMatch = teacher.password === password || (teacher.password.startsWith('$2') && await bcrypt.compare(password, teacher.password));
+
+        if (isMatch) {
+            console.log(`[AUTH] Login successful for: ${teacher.name}`);
             const isProfileComplete = !!teacher.mobile && teacher.mobile.length > 0;
 
             res.json({
@@ -111,13 +119,16 @@ const loginTeacher = async (req, res) => {
                 email: teacher.email,
                 role: teacher.role,
                 isProfileComplete,
+                isFirstLogin: teacher.isFirstLogin, // Added this field so frontend can navigate correctly
                 token: 'mock_token_for_now'
             });
         } else {
-            res.status(401).json({ message: 'Invalid credentials' });
+            console.warn(`[AUTH] Login failed: Invalid password for ${email}`);
+            res.status(401).json({ message: 'Invalid ID or Password.' });
         }
     } catch (error) {
-        res.status(500).json({ message: error.message });
+        console.error(`[AUTH] Critical Login Error:`, error);
+        res.status(500).json({ message: 'Server error during login. Please try again.' });
     }
 };
 
