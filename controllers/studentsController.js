@@ -163,11 +163,11 @@ const getStudentProfile = async (req, res) => {
     }
 };
 
-// Get all students (summary list for Admin/Teachers)
+// Get all students (Full data for Admin/Teachers)
 const getAllStudents = async (req, res) => {
     try {
-        // Only return basic fields for the list view to reduce payload size
-        const students = await Student.find({}, 'rollNumber firstName lastName department yearOfStudy section semester isProfileComplete');
+        // Returning all fields as per user request to maintain 'old system' behavior
+        const students = await Student.find({});
         res.status(200).json(students);
     } catch (error) {
         res.status(500).json({ message: error.message });
