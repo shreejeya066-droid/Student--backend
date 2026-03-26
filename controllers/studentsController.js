@@ -282,6 +282,20 @@ const extractQueryIntent = (text) => {
         }
     }
 
+    // --- 6. KEYWORD SEARCH EXTRACTOR (Restoring 'Old' style behavior) ---
+    // If we have terms like "dancing", "cricket" that weren't caught as strict filters
+    const commonStopWords = ['students', 'who', 'with', 'like', 'know', 'having', 'search', 'for', 'find', 'all', 'of', 'the', 'a', 'in', 'at', 'year', 'cgpa', 'above', 'below', 'between', 'interested', 'willing', 'placement', 'not'];
+    const words = lowerText.split(/\s+/).filter(w => w.length > 2 && !commonStopWords.includes(w));
+    
+    if (words.length > 0) {
+        filters.keywords = words;
+        // Add to intent if not redundancy
+        const searchDesc = `Search: [${words.join(', ')}]`;
+        if (!intentDescriptions.includes(searchDesc)) {
+            intentDescriptions.push(searchDesc);
+        }
+    }
+
     return {
         filters,
         searchField: intentDescriptions.length > 0 ? intentDescriptions.join(' + ') : 'Strict Filter',
@@ -304,9 +318,9 @@ const naturalLanguageQuery = async (req, res) => {
         // Build MongoDB Query Object strictly based on requirements
         const mongoQuery = {};
 
-        // 1. Strict Year Filter
+        // 1. Correct Year Filter (using yearOfStudy as per schema)
         if (filters.year !== undefined) {
-            mongoQuery.year = filters.year;
+            mongoQuery.yearOfStudy = filters.year;
         }
 
         // 2. Strict CGPA Filter
@@ -314,19 +328,34 @@ const naturalLanguageQuery = async (req, res) => {
             mongoQuery.cgpa = filters.cgpa;
         }
 
-        // 3. Strict Placement Interest Filter
+        // 3. Strict Placement Interest Filter (Mapping boolean to 'Yes'/'No' string in DB)
         if (filters.placementInterest !== undefined) {
-            mongoQuery.placementInterest = filters.placementInterest;
+             mongoQuery.placementWillingness = filters.placementInterest ? { $regex: /yes/i } : { $regex: /no/i };
         }
 
-        // 4. Strict Skills Filter ($in)
+        // 4. Strict Skills Filter (Mapping to 'technicalSkills' in schema)
         if (filters.skills) {
-            mongoQuery.skills = filters.skills;
+            mongoQuery.technicalSkills = filters.skills;
         }
 
         // 5. Department Filter (Legacy support)
         if (filters.department) {
             mongoQuery.department = { $regex: new RegExp(`^${filters.department}$`, 'i') };
+        }
+
+        // 6. Generic Keyword Search Fallback (Traditional NLP Feature)
+        if (filters.keywords && filters.keywords.length > 0) {
+            const keywordRegex = new RegExp(filters.keywords.join('|'), 'i');
+            mongoQuery.$or = [
+                { firstName: keywordRegex },
+                { lastName: keywordRegex },
+                { rollNumber: keywordRegex },
+                { technicalSkills: keywordRegex },
+                { hobbies: keywordRegex },
+                { sports: keywordRegex },
+                { clubs: keywordRegex },
+                { interest: keywordRegex }
+            ];
         }
 
         console.log("Final Filter:", mongoQuery);
@@ -336,10 +365,9 @@ const naturalLanguageQuery = async (req, res) => {
             return res.status(200).json({
                 meta: { original_query: query, count: 0 },
                 data: [],
-                message: "No specific filters detected. Try '3rd year students with cgpa above 8.5'"
+                message: "No specific filters or keywords detected. Try 'dancing' or '3rd year students'"
             });
         }
-
         const students = await Student.find(mongoQuery);
 
         res.status(200).json({
