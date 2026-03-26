@@ -240,7 +240,6 @@ const extractQueryIntent = (text) => {
 const naturalLanguageQuery = async (req, res) => {
     try {
         const { query, year, cgpa, placement, skill } = req.body;
-        const andQueryArray = [];
 
         // 1. NLP EXTRACTION
         const nlp = extractQueryIntent(query);
@@ -248,13 +247,14 @@ const naturalLanguageQuery = async (req, res) => {
 
         // DEBUG LOGS
         console.log("------------------- HYBRID SMART SEARCH -------------------");
-        console.log("Input:", query || "None");
-        console.log("UI Filters:", { year, cgpa, placement, skill });
+        console.log("INPUT:", query || "None");
+        console.log("UI FILTERS:", { year, cgpa, placement, skill });
 
         // helper for adding filters
         const buildAndArray = (uiFilters, nlpFilters, searchKeywords) => {
             const arr = [];
-            // UI
+            
+            // a. UI FILTERS (Priority)
             if (uiFilters.year && uiFilters.year !== 'All') arr.push({ yearOfStudy: parseInt(uiFilters.year) });
             if (uiFilters.cgpa && uiFilters.cgpa !== 'All') arr.push({ cgpa: { $gte: parseFloat(uiFilters.cgpa) } });
             if (uiFilters.placement && uiFilters.placement !== 'All') {
@@ -270,19 +270,27 @@ const naturalLanguageQuery = async (req, res) => {
                     ]
                 });
             }
-            // NLP
+
+            // b. NLP FILTERS (Parsed Intents)
             if (nlpFilters.yearOfStudy) arr.push({ yearOfStudy: nlpFilters.yearOfStudy });
             if (nlpFilters.cgpa) arr.push({ cgpa: nlpFilters.cgpa });
 
-            // Keywords
+            // c. COMPREHENSIVE KEYWORD SEARCH (Broad Fallback)
             if (query && query.trim()) {
-                const regex = new RegExp(query.trim().split(/\s+/).join('|'), 'i');
+                const words = query.trim().split(/\s+/);
+                const keywordRegex = new RegExp(words.join('|'), 'i');
+                const fullQueryRegex = new RegExp(query.trim(), 'i');
+
                 arr.push({
                     $or: [
-                        { firstName: regex }, { lastName: regex }, { rollNumber: regex },
-                        { skills: regex }, { technicalSkills: regex },
-                        { hobbies: regex }, { interest: regex }, { interests: regex },
-                        { achievements: regex }
+                        { firstName: keywordRegex }, { lastName: keywordRegex }, { rollNumber: keywordRegex },
+                        { firstName: fullQueryRegex }, { lastName: fullQueryRegex }, // Whole phrase matches
+                        { skills: keywordRegex }, { technicalSkills: keywordRegex }, { technicalSkill: keywordRegex },
+                        { hobbies: keywordRegex }, { hobby: keywordRegex }, // Plural and singular
+                        { interest: keywordRegex }, { interests: keywordRegex },
+                        { achievements: keywordRegex }, { certifications: keywordRegex },
+                        { programmingLanguages: keywordRegex }, { tools: keywordRegex },
+                        { internshipCompany: keywordRegex }, { address: keywordRegex }
                     ]
                 });
             }
@@ -290,23 +298,25 @@ const naturalLanguageQuery = async (req, res) => {
         };
 
         const strictQuery = buildAndArray({ year, cgpa, placement, skill }, filters, keywords);
-        let finalQuery = strictQuery.length > 0 ? { $and: strictQuery } : {};
+        let finalQueryObject = strictQuery.length > 0 ? { $and: strictQuery } : {};
 
-        let students = await Student.find(finalQuery);
+        let students = await Student.find(finalQueryObject);
 
-        // RELAXED SEARCH FALLBACK
-        // If query exist and filters are present but results are 0, try searching without UI filters
+        // RELAXED FALLBACK (If Strict search returns 0 and we have UI filters active)
         if (students.length === 0 && (year !== 'All' || cgpa !== 'All' || placement !== 'All' || skill !== 'All') && query) {
-            console.log("Strict Search returned 0. Retrying relaxed search (Ignoring UI Dropdowns)...");
+            console.log("No strictly matching students. Retrying with keyword search ONLY...");
             const relaxedQuery = buildAndArray({ year: 'All', cgpa: 'All', placement: 'All', skill: 'All' }, filters, keywords);
             const fallbackQuery = relaxedQuery.length > 0 ? { $and: relaxedQuery } : {};
             students = await Student.find(fallbackQuery);
         }
 
+        // Populate metadata for UI
+        const extractedKeyword = keywords.length > 0 ? keywords.join(', ') : query;
+
         res.status(200).json({
             meta: {
                 original_query: query || "None",
-                extracted_keyword: keywords.join(', ') || query || "General Search",
+                extracted_keyword: extractedKeyword || "Smart Search",
                 count: students.length
             },
             data: students
@@ -314,7 +324,7 @@ const naturalLanguageQuery = async (req, res) => {
 
     } catch (error) {
         console.error('NLP Search Error:', error);
-        res.status(500).json({ message: 'Search failed. Please try again.' });
+        res.status(500).json({ message: 'Dynamic search update failed. Reverting to basic mode.' });
     }
 };
 
