@@ -46,7 +46,7 @@ const studentSchema = mongoose.Schema({
     tenthPercent: { type: String },
     twelfthPercent: { type: String },
     diplomaPercent: { type: String },
-    cgpa: { type: String }, // Can be string if formatted
+    cgpa: { type: Number }, // Standardized as Number for numerical search
     backlogs: { type: String, default: '0' },
 
     // Sem Wise
