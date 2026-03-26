@@ -59,7 +59,7 @@ const studentSchema = mongoose.Schema({
 
     // Skills
     programmingLanguages: { type: String },
-    technicalSkills: { type: String },
+    skills: { type: String }, // Renamed from technicalSkills
     tools: { type: String },
     certifications: { type: String },
 
@@ -84,7 +84,7 @@ const studentSchema = mongoose.Schema({
     prefLocation: { type: String },
 
     attendance: { type: Number },
-    interest: { type: String }, // Field for natural language search
+    interests: { type: String }, // Renamed from interest (Field for natural language search)
     
     // Password Recovery (OTP based)
     otp: { type: String },

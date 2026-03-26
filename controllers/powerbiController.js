@@ -15,7 +15,7 @@ exports.getPowerBiData = async (req, res) => {
             cgpa: 1,
             arrears: 1,
             placementStatus: 1,
-            technicalSkills: 1,
+            skills: 1,
             softSkills: 1,
             attendancePercentage: 1,
             createdAt: 1

@@ -190,52 +190,42 @@ const deleteStudent = async (req, res) => {
     }
 };
 
-// Helper function to extract multiple intents for compound queries (Hybrid Version)
+// Helper function to extract multiple intents for compound queries (Simple/Raw Version)
 const extractQueryIntent = (text) => {
     if (!text) return { filters: {}, keywords: [], intentDescriptions: [] };
 
     const lowerText = text.toLowerCase();
     const filters = {};
     const intentDescriptions = [];
-    let remainingText = lowerText;
+    
+    // --- Extraction (Do NOT remove from text, just detect) ---
 
-    // --- 1. PLACEMENT INTEREST ---
+    // 1. Placement
     if (lowerText.match(/not\s+(?:interested|willing)\s+(?:in\s+)?placement/i) || 
         lowerText.match(/placement\s+(?:is\s+)?not\s+(?:preferred|interested)/i)) {
         filters.placementInterest = false;
         intentDescriptions.push('Not interested in placement');
-        remainingText = remainingText.replace(/not\s+(?:interested|willing)\s+(?:in\s+)?placement/i, '');
-        remainingText = remainingText.replace(/placement\s+(?:is\s+)?not\s+(?:preferred|interested)/i, '');
     } else if (lowerText.match(/(?:interested|willing)\s+(?:in\s+)?placement/i)) {
         filters.placementInterest = true;
         intentDescriptions.push('Interested in placement');
-        remainingText = remainingText.replace(/(?:interested|willing)\s+(?:in\s+)?placement/i, '');
     }
 
-    // --- 2. YEAR FILTER ---
-    const yearMappers = {
-        '1st': 1, 'first': 1, '1': 1,
-        '2nd': 2, 'second': 2, '2': 2,
-        '3rd': 3, 'third': 3, '3': 3,
-        '4th': 4, 'fourth': 4, '4': 4
-    };
-
+    // 2. Year
+    const yearMappers = { '1st': 1, 'first': 1, '1': 1, '2nd': 2, 'second': 2, '2': 2, '3rd': 3, 'third': 3, '3': 3, '4th': 4, 'fourth': 4, '4': 4 };
     for (const [key, val] of Object.entries(yearMappers)) {
         const yearRegex = new RegExp(`\\b${key}\\b\\s*year|year\\s*\\b${key}\\b`, 'i');
         if (yearRegex.test(lowerText)) {
             filters.year = val;
-            intentDescriptions.push(`NLP Year: ${val}`);
-            remainingText = remainingText.replace(yearRegex, '');
+            intentDescriptions.push(`Year: ${val}`);
             break;
         }
     }
 
-    // --- 3. CGPA FILTER ---
+    // 3. CGPA
     const betweenCgpa = lowerText.match(/between\s*(\d+(\.\d+)?)\s*and\s*(\d+(\.\d+)?)/i);
     if (betweenCgpa) {
         filters.cgpa = { $gte: betweenCgpa[1], $lte: betweenCgpa[3] };
-        intentDescriptions.push(`NLP CGPA: ${betweenCgpa[1]} to ${betweenCgpa[3]}`);
-        remainingText = remainingText.replace(betweenCgpa[0], '');
+        intentDescriptions.push(`CGPA: ${betweenCgpa[1]} to ${betweenCgpa[3]}`);
     } else {
         const aboveMatch = lowerText.match(/(?:above|more than|greater than|>)\s*(\d+(\.\d+)?)/i);
         const belowMatch = lowerText.match(/(?:below|less than|smaller than|<)\s*(\d+(\.\d+)?)/i);
@@ -244,134 +234,100 @@ const extractQueryIntent = (text) => {
             filters.cgpa = {};
             if (aboveMatch) {
                 filters.cgpa.$gte = aboveMatch[1];
-                intentDescriptions.push(`NLP CGPA >= ${aboveMatch[1]}`);
-                remainingText = remainingText.replace(aboveMatch[0], '');
+                intentDescriptions.push(`CGPA >= ${aboveMatch[1]}`);
             }
             if (belowMatch) {
                 filters.cgpa.$lt = belowMatch[1];
-                intentDescriptions.push(`NLP CGPA < ${belowMatch[1]}`);
-                remainingText = remainingText.replace(belowMatch[0], '');
+                intentDescriptions.push(`CGPA < ${belowMatch[1]}`);
             }
         }
     }
 
-    // --- 4. SKILLS DETECTION ---
-    const skillsToDetect = ['coding', 'python', 'java', 'javascript', 'react', 'node', 'web development', 'sql', 'cpp', 'c++'];
-    const detectedSkills = [];
-    for (const skill of skillsToDetect) {
-        if (lowerText.match(new RegExp(`\\b${skill.replace('+', '\\+')}\\b`, 'i'))) {
-            detectedSkills.push(skill);
-            // Don't remove from remainingText yet, let keyword search catch it too for broad matching
-        }
-    }
-    if (detectedSkills.length > 0) {
-        filters.skills = detectedSkills;
-        intentDescriptions.push(`NLP Skills: [${detectedSkills.join(', ')}]`);
-    }
+    const keywords = lowerText.split(/[\s,]+/).filter(w => w.length > 0);
 
-    // --- 5. KEYWORD EXTRACTION (Remaining Words) ---
-    const commonStopWords = ['students', 'student', 'who', 'with', 'like', 'know', 'having', 'search', 'for', 'find', 'all', 'of', 'the', 'a', 'in', 'at', 'year', 'cgpa', 'above', 'below', 'between', 'interested', 'willing', 'placement', 'not', 'and', 'only'];
-    const keywords = remainingText.split(/[\s,]+/)
-        .filter(w => w.length > 0 && !commonStopWords.includes(w.toLowerCase()));
-
-    return {
-        filters,
-        keywords,
-        intentDescriptions
-    };
+    return { filters, keywords, intentDescriptions };
 };
 
-// Dynamic Hybrid Search System
+// Dynamic Hybrid Search System (Final Fix)
 const naturalLanguageQuery = async (req, res) => {
     try {
         const { query, year, cgpa, placement, skill } = req.body;
         const andConditions = [];
 
-        // 1. EXTRACT NLP INTENT
+        // 1. EXTRACT NLP INTENT (Keywords always stay)
         const nlp = extractQueryIntent(query);
+        const keywords = nlp.keywords;
+        const filters = nlp.filters;
+
+        // DEBUG חובה (Required Logs)
+        console.log("------------------- SEARCH DEBUG -------------------");
+        console.log("KEYWORDS:", keywords);
+        console.log("NLP FILTERS:", filters);
+        console.log("UI FILTERS:", { year, cgpa, placement, skill });
 
         // 2. INTEGRATE UI FILTERS (Always Respected)
         if (year) {
             andConditions.push({ yearOfStudy: parseInt(year) });
         }
         if (cgpa) {
-            // CGPA is stored as string in schema, but we can search for >=
-            // If it's a fixed value from dropdown, we use it directly or as base
             andConditions.push({ cgpa: { $gte: cgpa.toString() } });
         }
         if (placement) {
-            // Dropdown might send 'Yes'/'No'
             andConditions.push({ placementWillingness: { $regex: new RegExp(`^${placement}$`, 'i') } });
         }
         if (skill) {
             andConditions.push({
                 $or: [
-                    { technicalSkills: { $regex: new RegExp(skill, 'i') } },
-                    { programmingLanguages: { $regex: new RegExp(skill, 'i') } },
-                    { tools: { $regex: new RegExp(skill, 'i') } }
+                    { skills: { $regex: new RegExp(skill, 'i') } },
+                    { programmingLanguages: { $regex: new RegExp(skill, 'i') } }
                 ]
             });
         }
 
-        // 3. INTEGRATE NLP FILTERS (Merge with UI using $and)
-        if (nlp.filters.year) {
-            andConditions.push({ yearOfStudy: nlp.filters.year });
+        // 3. INTEGRATE NLP FILTERS (Merged using $and)
+        if (filters.year) {
+            andConditions.push({ yearOfStudy: filters.year });
         }
-        if (nlp.filters.cgpa) {
-            andConditions.push({ cgpa: nlp.filters.cgpa });
+        if (filters.cgpa) {
+            andConditions.push({ cgpa: filters.cgpa });
         }
-        if (nlp.filters.placementInterest !== undefined) {
-            const pVal = nlp.filters.placementInterest ? 'yes' : 'no';
+        if (filters.placementInterest !== undefined) {
+            const pVal = filters.placementInterest ? 'yes' : 'no';
             andConditions.push({ placementWillingness: { $regex: new RegExp(`^${pVal}$`, 'i') } });
         }
-        if (nlp.filters.skills) {
-            const skillConditions = nlp.filters.skills.map(s => ({
-                $or: [
-                    { technicalSkills: { $regex: new RegExp(s, 'i') } },
-                    { programmingLanguages: { $regex: new RegExp(s, 'i') } },
-                    { tools: { $regex: new RegExp(s, 'i') } }
-                ]
-            }));
-            andConditions.push({ $and: skillConditions });
-        }
 
-        // 4. KEYWORD SEARCH (Always Active Across Multiple Fields)
-        // Combine raw query words and extracted keywords
-        const searchWords = nlp.keywords.length > 0 ? nlp.keywords : (query ? query.split(/\s+/) : []);
-        
-        if (searchWords.length > 0) {
+        // 4. KEYWORD SEARCH (Always Active if input exists)
+        if (query && query.trim().length > 0) {
+            const searchWords = query.trim().split(/\s+/);
             const keywordRegex = new RegExp(searchWords.join('|'), 'i');
+            
             andConditions.push({
                 $or: [
                     { firstName: keywordRegex },
                     { lastName: keywordRegex },
                     { rollNumber: keywordRegex },
-                    { technicalSkills: keywordRegex },
+                    { skills: keywordRegex },
                     { programmingLanguages: keywordRegex },
                     { hobbies: keywordRegex },
                     { sports: keywordRegex },
                     { clubs: keywordRegex },
-                    { interest: keywordRegex },
+                    { interests: keywordRegex },
                     { achievements: keywordRegex }
                 ]
             });
         }
 
         // 5. CONSTRUCT FINAL QUERY
-        // Fail-safe: If no filters/keywords provided, return all students (best possible match for empty state)
-        let mongoQuery = {};
-        if (andConditions.length > 0) {
-            mongoQuery = { $and: andConditions };
-        }
+        let mongoQuery = andConditions.length > 0 ? { $and: andConditions } : {};
 
-        console.log("Constructed Hybrid Query:", JSON.stringify(mongoQuery, null, 2));
+        console.log("FINAL QUERY:", JSON.stringify(mongoQuery, null, 2));
+        console.log("----------------------------------------------------");
 
         const students = await Student.find(mongoQuery);
 
         res.status(200).json({
             meta: {
                 original_query: query || "None",
-                filters_applied: nlp.intentDescriptions.join(' + ') || "None",
                 count: students.length
             },
             data: students
@@ -379,10 +335,7 @@ const naturalLanguageQuery = async (req, res) => {
 
     } catch (error) {
         console.error('Hybrid Search Error:', error);
-        res.status(500).json({ 
-            message: 'Error processing search system', 
-            error: error.message 
-        });
+        res.status(500).json({ message: 'Error processing search system' });
     }
 };
 
@@ -444,7 +397,7 @@ const getPowerBIData = async (req, res) => {
             Attendance: s.attendance || 0,
             PlacementWillingness: s.placementWillingness || 'No',
             HigherStudies: s.higherStudies || 'No',
-            Skills: s.technicalSkills || 'None',
+            Skills: s.skills || 'None',
             Gender: s.gender || 'Not Specified'
         }));
         res.status(200).json(flatData);
