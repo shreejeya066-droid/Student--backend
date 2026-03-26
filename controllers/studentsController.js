@@ -236,10 +236,10 @@ const extractQueryIntent = (text) => {
     return { filters, keywords, intentDescriptions };
 };
 
-// NLP-Based Student Search (Single Input Mode)
+// Optimized Search Logic (Hybrid UI + NLP + Keyword)
 const naturalLanguageQuery = async (req, res) => {
     try {
-        const { query } = req.body;
+        const { query, year, cgpa, placement, skill } = req.body;
         const andQueryArray = [];
 
         // 1. NLP EXTRACTION
@@ -247,12 +247,33 @@ const naturalLanguageQuery = async (req, res) => {
         const { filters, keywords } = nlp;
 
         // DEBUG LOGS (Mandatory)
-        console.log("------------------- SINGLE INPUT NLP SEARCH -------------------");
+        console.log("------------------- HYBRID SMART SEARCH -------------------");
         console.log("Input:", query || "None");
-        console.log("Extracted Filters:", filters);
-        console.log("Keywords:", keywords);
+        console.log("NLP Filters:", filters);
+        console.log("UI Filters:", { year, cgpa, placement, skill });
 
-        // 2. ADD DETECTED FILTERS TO $AND
+        // 2. INTEGRATE UI FILTERS (Always Priority, skip if 'All')
+        if (year && year !== 'All') {
+            andQueryArray.push({ yearOfStudy: parseInt(year) });
+        }
+        if (cgpa && cgpa !== 'All') {
+            andQueryArray.push({ cgpa: { $gte: parseFloat(cgpa) } });
+        }
+        if (placement && placement !== 'All') {
+            const pVal = placement === 'Willing' || placement === 'Yes' ? /yes/i : /no/i;
+            andQueryArray.push({ placementWillingness: { $regex: pVal } });
+        }
+        if (skill && skill !== 'All') {
+            andQueryArray.push({
+                $or: [
+                    { skills: { $regex: new RegExp(skill, 'i') } },
+                    { technicalSkills: { $regex: new RegExp(skill, 'i') } },
+                    { programmingLanguages: { $regex: new RegExp(skill, 'i') } }
+                ]
+            });
+        }
+
+        // 3. INTEGRATE NLP FILTERS (Merged)
         if (filters.yearOfStudy) {
             andQueryArray.push({ yearOfStudy: filters.yearOfStudy });
         }
@@ -260,28 +281,30 @@ const naturalLanguageQuery = async (req, res) => {
             andQueryArray.push({ cgpa: filters.cgpa });
         }
 
-        // 3. ADD KEYWORD SEARCH TO $AND ($OR across multiple fields)
-        if (keywords.length > 0) {
-            const keywordRegex = new RegExp(keywords.join("|"), "i");
+        // 4. KEYWORD SEARCH (Broad Compatibility - Old & New Fields)
+        if (query && query.trim().length > 0) {
+            const keywordRegex = new RegExp(query.trim().split(/\s+/).join('|'), 'i');
             andQueryArray.push({
                 $or: [
                     { firstName: keywordRegex },
                     { lastName: keywordRegex },
                     { rollNumber: keywordRegex },
-                    { skills: keywordRegex },
+                    { skills: keywordRegex }, // New Field Name
+                    { technicalSkills: keywordRegex }, // Old Field Name
                     { hobbies: keywordRegex },
-                    { interests: keywordRegex },
-                    { achievements: keywordRegex }
+                    { interest: keywordRegex }, // Old Field Name
+                    { interests: keywordRegex }, // New Field Name
+                    { achievements: keywordRegex },
+                    { email: keywordRegex }
                 ]
             });
         }
 
-        // 4. FINAL QUERY CONSTRUCTION
-        // Fail-safe: Merge everything into $and. If nothing provided, return everything.
+        // 5. FINAL QUERY CONSTRUCTION
         let finalQuery = andQueryArray.length > 0 ? { $and: andQueryArray } : {};
 
         console.log("Final Query:", JSON.stringify(finalQuery, null, 2));
-        console.log("----------------------------------------------------------------");
+        console.log("-----------------------------------------------------------");
 
         const students = await Student.find(finalQuery);
 
@@ -295,7 +318,7 @@ const naturalLanguageQuery = async (req, res) => {
 
     } catch (error) {
         console.error('NLP Search Error:', error);
-        res.status(500).json({ message: 'Error processing dynamic search module' });
+        res.status(500).json({ message: 'Search failed. Please try again.' });
     }
 };
 
