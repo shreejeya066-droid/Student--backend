@@ -191,149 +191,116 @@ const deleteStudent = async (req, res) => {
 };
 
 // Optimized Dynamic Intent Extractor (Single Input Version)
+// Lightweight NLP: Extracts keywords and year phrases from free-text input
 const extractQueryIntent = (text) => {
-    if (!text) return { filters: {}, keywords: [], intentDescriptions: [] };
+    if (!text) return { yearOfStudy: null, keywords: [] };
 
-    const lowerText = text.toLowerCase();
-    const filters = {};
-    const intentDescriptions = [];
-    let remainingText = lowerText;
+    // 1. Normalize input
+    let normalized = text.toLowerCase().trim();
+    let yearOfStudy = null;
 
-    // 1. CGPA Detection (above/below)
-    const aboveMatch = lowerText.match(/(?:above|more than|greater than|>)\s*(\d+(\.\d+)?)/i);
-    const belowMatch = lowerText.match(/(?:below|less than|smaller than|<)\s*(\d+(\.\d+)?)/i);
-    
-    if (aboveMatch) {
-       filters.cgpa = filters.cgpa || {};
-       filters.cgpa.$gte = Number(aboveMatch[1]);
-       intentDescriptions.push(`CGPA >= ${aboveMatch[1]}`);
-       remainingText = remainingText.replace(aboveMatch[0], '');
-    }
-    if (belowMatch) {
-       filters.cgpa = filters.cgpa || {};
-       filters.cgpa.$lte = Number(belowMatch[1]);
-       intentDescriptions.push(`CGPA <= ${belowMatch[1]}`);
-       remainingText = remainingText.replace(belowMatch[0], '');
-    }
+    // 2. Smart Detection: Detect year phrases (1st year, 2nd year, etc.)
+    const yearMappers = {
+        '1st year': 1, 'first year': 1,
+        '2nd year': 2, 'second year': 2,
+        '3rd year': 3, 'third year': 3,
+        '4th year': 4, 'fourth year': 4
+    };
 
-    // 2. Year Detection (1st, 2nd, 3rd year)
-    const yearMappers = { '1st': 1, 'first': 1, '1': 1, '2nd': 2, 'second': 2, '2': 2, '3rd': 3, 'third': 3, '3': 3, '4th': 4, 'fourth': 4, '4': 4 };
-    for (const [key, val] of Object.entries(yearMappers)) {
-        const yearRegex = new RegExp(`\\b${key}\\b\\s*year|year\\s*\\b${key}\\b`, 'i');
-        if (yearRegex.test(lowerText)) {
-            filters.yearOfStudy = val;
-            intentDescriptions.push(`Year: ${val}`);
-            remainingText = remainingText.replace(yearRegex, '');
+    for (const [phrase, year] of Object.entries(yearMappers)) {
+        if (normalized.includes(phrase)) {
+            yearOfStudy = year;
+            // Remove the year phrase so it doesn't become a keyword
+            normalized = normalized.replace(phrase, '').trim();
             break;
         }
     }
 
-    // 3. Keyword Stabilization (Remaining Words)
-    const connections = ['students', 'student', 'who', 'with', 'and', 'having', 'search', 'for', 'find', 'all', 'of', 'at', 'only', 'in', 'the', 'a'];
-    const keywords = remainingText.split(/[\s,]+/)
-        .filter(w => w.length > 0 && !connections.includes(w.toLowerCase()));
+    // 3. Keyword Extraction: Filter out common noise words
+    const fillerWords = ["students", "student", "who", "with", "and", "the", "in", "like", "for", "matching"];
+    const keywords = normalized.split(/[\s,]+/)
+        .filter(word => word.length > 1 && !fillerWords.includes(word));
 
-    return { filters, keywords, intentDescriptions };
+    return { yearOfStudy, keywords };
 };
 
-// Optimized Search Logic (Hybrid UI + NLP + Keyword)
+// Redesigned NLP Search: Flexible human-like search logic
 const naturalLanguageQuery = async (req, res) => {
     try {
-        const { query, year, cgpa, placement, skill } = req.body;
+        const { query } = req.body;
 
-        // 1. NLP EXTRACTION
-        const nlp = extractQueryIntent(query);
-        const { filters, keywords } = nlp;
-
-        // DB Health Check (Helpful for debugging '0 results')
-        const totalInDb = await Student.countDocuments();
-
-        // helper for adding filters
-        const buildAndArray = (uiFilters, nlpFilters, searchKeywords) => {
-            const arr = [];
-            
-            // a. Structured Filters
-            const targetYear = uiFilters.year !== 'All' ? parseInt(uiFilters.year) : nlpFilters.yearOfStudy;
-            if (targetYear) arr.push({ yearOfStudy: targetYear });
-
-            const minCgpa = uiFilters.cgpa !== 'All' ? parseFloat(uiFilters.cgpa) : (nlpFilters.cgpa ? nlpFilters.cgpa.$gte : null);
-            if (minCgpa) {
-                // Use $expr and $toDouble to handle potential stringified CGPA in DB
-                arr.push({
-                    $expr: { $gte: [{ $toDouble: "$cgpa" }, minCgpa] }
-                });
-            }
-
-            if (uiFilters.placement && uiFilters.placement !== 'All') {
-                const pVal = uiFilters.placement === 'Willing' || uiFilters.placement === 'Yes' || uiFilters.placement === 'Interested' ? /yes/i : /no/i;
-                arr.push({ placementWillingness: { $regex: pVal } });
-            }
-
-            if (uiFilters.skill && uiFilters.skill !== 'All') {
-                arr.push({
-                    $or: [
-                        { skills: { $regex: new RegExp(uiFilters.skill, 'i') } },
-                        { technicalSkills: { $regex: new RegExp(uiFilters.skill, 'i') } }
-                    ]
-                });
-            }
-
-            // b. Content Keywords
-            if (query && query.trim()) {
-                const searchRegex = new RegExp(query.trim().split(/\s+/).join('|'), 'i');
-                arr.push({
-                    $or: [
-                        { firstName: searchRegex }, { lastName: searchRegex }, { rollNumber: searchRegex },
-                        { skills: searchRegex }, { technicalSkills: searchRegex }, { technicalSkill: searchRegex },
-                        { hobbies: searchRegex }, { hobby: searchRegex }, { interest: searchRegex }, { interests: searchRegex },
-                        { achievements: searchRegex }, { certifications: searchRegex }, { programmingLanguages: searchRegex },
-                        { internshipCompany: searchRegex }, { address: searchRegex }, { email: searchRegex }
-                    ]
-                });
-            }
-            return arr;
-        };
-
-        // Execution Level 1: Strict Hybrid Search
-        const strictArr = buildAndArray({ year, cgpa, placement, skill }, filters, keywords);
-        let students = await Student.find(strictArr.length > 0 ? { $and: strictArr } : {});
-
-        // Execution Level 2: Relaxed Search (Ignore UI Dropdowns)
-        if (students.length === 0 && query && (year !== 'All' || cgpa !== 'All' || placement !== 'All' || skill !== 'All')) {
-            console.log("Strict search 0. Retrying relaxed search...");
-            const relaxedArr = buildAndArray({ year: 'All', cgpa: 'All', placement: 'All', skill: 'All' }, filters, keywords);
-            students = await Student.find(relaxedArr.length > 0 ? { $and: relaxedArr } : {});
+        // 1. No input -> return all students
+        if (!query || query.trim() === '') {
+            const allStudents = await Student.find({});
+            return res.status(200).json({
+                meta: { count: allStudents.length, type: 'all' },
+                data: allStudents
+            });
         }
 
-        // Execution Level 3: AGGRESSIVE UNIVERSAL SEARCH (If everything else fails)
-        if (students.length === 0 && query) {
-            console.log("Relaxed search 0. Retrying AGGRESSIVE universal search...");
-            const aggressiveRegex = new RegExp(query.trim().split(/\s+/).filter(w => w.length > 2).join('|'), 'i');
-            if (aggressiveRegex.toString() !== '/(?:)/i') {
-                students = await Student.find({
-                    $or: [
-                        { firstName: aggressiveRegex }, { lastName: aggressiveRegex }, { rollNumber: aggressiveRegex },
-                        { skills: aggressiveRegex }, { technicalSkills: aggressiveRegex }, { technicalSkill: aggressiveRegex },
-                        { hobbies: aggressiveRegex }, { hobby: aggressiveRegex }, { interest: aggressiveRegex }, { interests: aggressiveRegex },
-                        { address: aggressiveRegex }, { certifications: aggressiveRegex }
-                    ]
-                }).limit(20);
-            }
+        // 2. Extract Year and Keywords
+        const { yearOfStudy, keywords } = extractQueryIntent(query);
+
+        // 3. Define target search fields (fullName is split into first/last)
+        const searchFields = [
+            'firstName', 'lastName', 'rollNumber', 'skills', 
+            'hobbies', 'sports', 'clubs', 'interests', 'achievements'
+        ];
+
+        let keywordFilters = [];
+
+        // 4. Build Keyword Regex Filters (ANY keyword match)
+        if (keywords.length > 0) {
+            keywords.forEach(word => {
+                const regex = new RegExp(word, 'i');
+                searchFields.forEach(field => {
+                    keywordFilters.push({ [field]: { $regex: regex } });
+                });
+            });
         }
+
+        // 5. Construct Final MongoDB Query based on rules
+        let mongoQuery = {};
+
+        if (keywordFilters.length > 0 && yearOfStudy) {
+            // Both detected -> combine with $and
+            mongoQuery = {
+                $and: [
+                    { yearOfStudy: yearOfStudy },
+                    { $or: keywordFilters }
+                ]
+            };
+        } else if (keywordFilters.length > 0) {
+            // Only keywords -> search across all fields
+            mongoQuery = { $or: keywordFilters };
+        } else if (yearOfStudy) {
+            // Only year phrase
+            mongoQuery = { yearOfStudy: yearOfStudy };
+        } else {
+            // If keywords were too short/filler, fallback to all but try direct query search just in case
+            mongoQuery = {
+                $or: searchFields.map(f => ({ [f]: { $regex: new RegExp(query.trim(), 'i') } }))
+            };
+        }
+
+        // 6. Execute Search
+        const students = await Student.find(mongoQuery);
+
+        console.log(`Search result for "${query}": ${students.length} found`);
 
         res.status(200).json({
             meta: {
-                original_query: query || "None",
-                extracted_keyword: keywords.join(', ') || query || "Smart Search",
-                count: students.length,
-                dbStatus: totalInDb > 0 ? `Connected (${totalInDb} students in DB)` : "Empty DB"
+                original_query: query,
+                extracted_keywords: keywords,
+                detected_year: yearOfStudy,
+                count: students.length
             },
             data: students
         });
 
     } catch (error) {
         console.error('NLP Search Error:', error);
-        res.status(500).json({ message: 'Search system is experiencing heavy load. Please refine your query.' });
+        res.status(500).json({ message: 'Search system is stable but failed to process this specific query.' });
     }
 };
 
