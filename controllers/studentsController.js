@@ -259,11 +259,12 @@ const naturalLanguageQuery = async (req, res) => {
         const intent = extractQueryIntent(query || '');
         const { yearOfStudy: textYear, keywords, cgpaFilter: textCgpa } = intent;
 
-        // 3. Define target search fields
+        // 3. Define target search fields (Inclusive list based on schema)
         const searchFields = [
-            'firstName', 'lastName', 'rollNumber', 'skills', 'technicalSkills', 'hobbies', 
-            'sports', 'clubs', 'interests', 'achievements', 'certifications', 
-            'programmingLanguages', 'address'
+            'firstName', 'lastName', 'rollNumber', 'skills', 'technicalSkills', 'technicalSkill',
+            'hobbies', 'hobby', 'sports', 'clubs', 'interests', 'interest', 'achievements', 
+            'certifications', 'programmingLanguages', 'address', 'events', 'tools', 
+            'interestedDomain', 'prefLocation'
         ];
 
         let andConditions = [];
@@ -278,10 +279,7 @@ const naturalLanguageQuery = async (req, res) => {
 
         if (finalCgpaMin && finalCgpaMin !== 'All') {
             const minVal = parseFloat(finalCgpaMin);
-            // Robust numeric check using $not to avoid $toDouble errors on null/non-numeric strings
-            andConditions.push({ 
-                cgpa: { $gte: minVal } 
-            });
+            andConditions.push({ cgpa: { $gte: minVal } });
         }
 
         if (placement && placement !== 'All') {
@@ -294,15 +292,19 @@ const naturalLanguageQuery = async (req, res) => {
             andConditions.push({
                 $or: [
                     { skills: { $regex: skillRegex } },
-                    { programmingLanguages: { $regex: skillRegex } }
+                    { programmingLanguages: { $regex: skillRegex } },
+                    { tools: { $regex: skillRegex } },
+                    { interestedDomain: { $regex: skillRegex } }
                 ]
             });
         }
 
-        // 5. Keyword Regex Filters from text
-        if (keywords.length > 0) {
+        // 5. Keyword Regex Filters (Broad Match across all fields)
+        const queryWords = keywords.length > 0 ? keywords : [query.trim()];
+        if (queryWords.length > 0 && queryWords[0] !== '') {
             let keywordOr = [];
-            keywords.forEach(word => {
+            queryWords.forEach(word => {
+                if (word.length < 2) return; // Skip very short words unless it's a digit
                 const regex = new RegExp(word, 'i');
                 searchFields.forEach(field => {
                     keywordOr.push({ [field]: { $regex: regex } });
@@ -315,11 +317,6 @@ const naturalLanguageQuery = async (req, res) => {
         let mongoQuery = {};
         if (andConditions.length > 0) {
             mongoQuery = andConditions.length > 1 ? { $and: andConditions } : andConditions[0];
-        } else if (query && query.trim() !== '') {
-            // Fallback for raw text if no keywords extracted
-            mongoQuery = {
-                $or: searchFields.map(f => ({ [f]: { $regex: new RegExp(query.trim(), 'i') } }))
-            };
         }
 
         // 7. Execute Search
@@ -331,8 +328,8 @@ const naturalLanguageQuery = async (req, res) => {
         res.status(200).json({
             meta: {
                 original_query: query,
-                extracted_keyword: keywords.join(', ') || "Full Match",
-                extracted_keywords: keywords,
+                extracted_keyword: queryWords.join(', ') || "Full Match",
+                extracted_keywords: queryWords,
                 detected_year: finalYear,
                 count: students.length,
                 dbStatus: "Active",
