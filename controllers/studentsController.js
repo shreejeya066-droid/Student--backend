@@ -236,33 +236,70 @@ const extractQueryIntent = (text) => {
     return { yearOfStudy, keywords, cgpaFilter };
 };
 
-// Redesigned NLP Search: Flexible human-like search logic
+// Redesigned NLP Search: Flexible human-like search logic with Hybrid Support
 const naturalLanguageQuery = async (req, res) => {
     try {
-        const { query } = req.body;
+        const { query, year, cgpa, placement, skill } = req.body;
 
-        // 1. No input -> return all students
-        if (!query || query.trim() === '') {
+        // 1. No input and no filters -> return all students
+        if ((!query || query.trim() === '') && !year && !cgpa && !placement && !skill) {
             const allStudents = await Student.find({});
             return res.status(200).json({
-                meta: { count: allStudents.length, extracted_keyword: "All Students" },
+                meta: { 
+                    count: allStudents.length, 
+                    extracted_keyword: "All Students",
+                    dbStatus: "Connected",
+                    extracted_intent: {}
+                },
                 data: allStudents
             });
         }
 
-        // 2. Extract Intent (Year, CPGA, Keywords)
-        const { yearOfStudy, keywords, cgpaFilter } = extractQueryIntent(query);
+        // 2. Extract Intent from Text
+        const intent = extractQueryIntent(query || '');
+        const { yearOfStudy: textYear, keywords, cgpaFilter: textCgpa } = intent;
 
-        // 3. Define target search fields (Inclusive list for robustness)
+        // 3. Define target search fields
         const searchFields = [
-            'firstName', 'lastName', 'rollNumber', 'skills', 'technicalSkills', 'technicalSkill',
-            'hobbies', 'hobby', 'sports', 'clubs', 'interests', 'interest', 'achievements', 
-            'certifications', 'programmingLanguages', 'address'
+            'firstName', 'lastName', 'rollNumber', 'skills', 'technicalSkills', 'hobbies', 
+            'sports', 'clubs', 'interests', 'achievements', 'certifications', 
+            'programmingLanguages', 'address'
         ];
 
         let andConditions = [];
 
-        // 4. Build Keyword Regex Filters (ANY keyword match)
+        // 4. Manual Dropdown Filters (Override/Add to text intent)
+        const finalYear = year || textYear;
+        const finalCgpaMin = cgpa || (textCgpa && textCgpa.$gte);
+        
+        if (finalYear && finalYear !== 'All') {
+            andConditions.push({ yearOfStudy: Number(finalYear) });
+        }
+
+        if (finalCgpaMin && finalCgpaMin !== 'All') {
+            const minVal = parseFloat(finalCgpaMin);
+            // Robust numeric check using $not to avoid $toDouble errors on null/non-numeric strings
+            andConditions.push({ 
+                cgpa: { $gte: minVal } 
+            });
+        }
+
+        if (placement && placement !== 'All') {
+            const isWilling = placement === 'Interested';
+            andConditions.push({ placementWillingness: { $regex: new RegExp(isWilling ? 'yes' : 'no', 'i') } });
+        }
+
+        if (skill && skill !== 'All') {
+            const skillRegex = new RegExp(skill, 'i');
+            andConditions.push({
+                $or: [
+                    { skills: { $regex: skillRegex } },
+                    { programmingLanguages: { $regex: skillRegex } }
+                ]
+            });
+        }
+
+        // 5. Keyword Regex Filters from text
         if (keywords.length > 0) {
             let keywordOr = [];
             keywords.forEach(word => {
@@ -274,53 +311,45 @@ const naturalLanguageQuery = async (req, res) => {
             if (keywordOr.length > 0) andConditions.push({ $or: keywordOr });
         }
 
-        // 5. Add Year Filter
-        if (yearOfStudy) {
-            andConditions.push({ yearOfStudy: yearOfStudy });
-        }
-
-        // 6. Add CGPA Filter
-        if (cgpaFilter) {
-            // Using $expr to handle potential stringified CGPA values in DB if any
-            const operator = cgpaFilter.$gte ? '$gte' : '$lte';
-            const value = cgpaFilter.$gte || cgpaFilter.$lte;
-            andConditions.push({
-                $expr: { [operator]: [{ $toDouble: "$cgpa" }, value] }
-            });
-        }
-
-        // 7. Construct Final Query
+        // 6. Construct Final Query
         let mongoQuery = {};
-        if (andConditions.length > 1) {
-            mongoQuery = { $and: andConditions };
-        } else if (andConditions.length === 1) {
-            mongoQuery = andConditions[0];
-        } else {
-            // Fallback: match entire query against all fields
+        if (andConditions.length > 0) {
+            mongoQuery = andConditions.length > 1 ? { $and: andConditions } : andConditions[0];
+        } else if (query && query.trim() !== '') {
+            // Fallback for raw text if no keywords extracted
             mongoQuery = {
                 $or: searchFields.map(f => ({ [f]: { $regex: new RegExp(query.trim(), 'i') } }))
             };
         }
 
-        // 8. Execute Search
+        // 7. Execute Search
+        console.log('Executing Mongo Query:', JSON.stringify(mongoQuery));
         const students = await Student.find(mongoQuery);
 
-        console.log(`Search result for "${query}": ${students.length} found`);
+        console.log(`Search result for "${query || 'Filters'}": ${students.length} found`);
 
         res.status(200).json({
             meta: {
                 original_query: query,
-                extracted_keyword: keywords.join(', ') || "Full Match", // Singular for frontend compatibility
+                extracted_keyword: keywords.join(', ') || "Full Match",
                 extracted_keywords: keywords,
-                detected_year: yearOfStudy,
-                count: students.length
+                detected_year: finalYear,
+                count: students.length,
+                dbStatus: "Active",
+                extracted_intent: {
+                    minCgpa: finalCgpaMin,
+                    year: finalYear
+                }
             },
             data: students
         });
 
     } catch (error) {
         console.error('NLP Search Error:', error);
-        res.status(500).json({ message: 'Search system encountered an error. Please try a simpler keyword.' });
+        res.status(500).json({ 
+            message: 'Search system encountered an error. Please try a simpler keyword.',
+            error: error.message 
+        });
     }
 };
 

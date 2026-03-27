@@ -12,15 +12,15 @@ async function debug() {
         
         const matches = await Student.find({
             $or: [
-                { firstName: /cooking/i },
-                { lastName: /cooking/i },
-                { hobbies: /cooking/i },
-                { interests: /cooking/i },
-                { skills: /cooking/i }
+                { firstName: /drawing/i },
+                { lastName: /drawing/i },
+                { hobbies: /drawing/i },
+                { interests: /drawing/i },
+                { skills: /drawing/i }
             ]
         });
         
-        console.log(`Matches for "cooking": ${matches.length}`);
+        console.log(`Matches for "drawing": ${matches.length}`);
         if (matches.length > 0) {
             console.log('Sample match:', JSON.stringify(matches[0], null, 2));
         } else {
