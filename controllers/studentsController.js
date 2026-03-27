@@ -302,15 +302,16 @@ const naturalLanguageQuery = async (req, res) => {
         // 5. Keyword Regex Filters (Broad Match across all fields)
         const queryWords = keywords.length > 0 ? keywords : [query.trim()];
         if (queryWords.length > 0 && queryWords[0] !== '') {
-            let keywordOr = [];
+            // IMPROVEMENT: Use AND logic for multi-word queries to increase precision
+            // Each word must be present in at least one field, but all words are required.
             queryWords.forEach(word => {
-                if (word.length < 2) return; // Skip very short words unless it's a digit
+                if (word.length < 2) return; 
                 const regex = new RegExp(word, 'i');
-                searchFields.forEach(field => {
-                    keywordOr.push({ [field]: { $regex: regex } });
-                });
+                const fieldMatches = searchFields.map(field => ({
+                    [field]: { $regex: regex }
+                }));
+                andConditions.push({ $or: fieldMatches });
             });
-            if (keywordOr.length > 0) andConditions.push({ $or: keywordOr });
         }
 
         // 6. Construct Final Query
