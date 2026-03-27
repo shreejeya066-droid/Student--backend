@@ -191,15 +191,28 @@ const deleteStudent = async (req, res) => {
 };
 
 // Optimized Dynamic Intent Extractor (Single Input Version)
-// Lightweight NLP: Extracts keywords and year phrases from free-text input
+// Lightweight NLP: Extracts keywords, year, and CGPA from free-text input
 const extractQueryIntent = (text) => {
-    if (!text) return { yearOfStudy: null, keywords: [] };
+    if (!text) return { yearOfStudy: null, keywords: [], cgpaFilter: null };
 
     // 1. Normalize input
     let normalized = text.toLowerCase().trim();
     let yearOfStudy = null;
+    let cgpaFilter = null;
 
-    // 2. Smart Detection: Detect year phrases (1st year, 2nd year, etc.)
+    // 2. CGPA Detection (above/below)
+    const aboveMatch = normalized.match(/(?:above|more than|greater than|>)\s*(\d+(\.\d+)?)/i);
+    const belowMatch = normalized.match(/(?:below|less than|smaller than|<)\s*(\d+(\.\d+)?)/i);
+    
+    if (aboveMatch) {
+        cgpaFilter = { $gte: Number(aboveMatch[1]) };
+        normalized = normalized.replace(aboveMatch[0], '');
+    } else if (belowMatch) {
+        cgpaFilter = { $lte: Number(belowMatch[1]) };
+        normalized = normalized.replace(belowMatch[0], '');
+    }
+
+    // 3. Smart Detection: Detect year phrases (1st year, 2nd year, etc.)
     const yearMappers = {
         '1st year': 1, 'first year': 1,
         '2nd year': 2, 'second year': 2,
@@ -210,18 +223,17 @@ const extractQueryIntent = (text) => {
     for (const [phrase, year] of Object.entries(yearMappers)) {
         if (normalized.includes(phrase)) {
             yearOfStudy = year;
-            // Remove the year phrase so it doesn't become a keyword
             normalized = normalized.replace(phrase, '').trim();
             break;
         }
     }
 
-    // 3. Keyword Extraction: Filter out common noise words
-    const fillerWords = ["students", "student", "who", "with", "and", "the", "in", "like", "for", "matching"];
+    // 4. Keyword Extraction: Filter out common noise words
+    const fillerWords = ["students", "student", "who", "with", "and", "the", "in", "like", "for", "matching", "having", "is", "are"];
     const keywords = normalized.split(/[\s,]+/)
         .filter(word => word.length > 1 && !fillerWords.includes(word));
 
-    return { yearOfStudy, keywords };
+    return { yearOfStudy, keywords, cgpaFilter };
 };
 
 // Redesigned NLP Search: Flexible human-like search logic
@@ -233,57 +245,64 @@ const naturalLanguageQuery = async (req, res) => {
         if (!query || query.trim() === '') {
             const allStudents = await Student.find({});
             return res.status(200).json({
-                meta: { count: allStudents.length, type: 'all' },
+                meta: { count: allStudents.length, extracted_keyword: "All Students" },
                 data: allStudents
             });
         }
 
-        // 2. Extract Year and Keywords
-        const { yearOfStudy, keywords } = extractQueryIntent(query);
+        // 2. Extract Intent (Year, CPGA, Keywords)
+        const { yearOfStudy, keywords, cgpaFilter } = extractQueryIntent(query);
 
-        // 3. Define target search fields (fullName is split into first/last)
+        // 3. Define target search fields (Inclusive list for robustness)
         const searchFields = [
-            'firstName', 'lastName', 'rollNumber', 'skills', 
-            'hobbies', 'sports', 'clubs', 'interests', 'achievements'
+            'firstName', 'lastName', 'rollNumber', 'skills', 'technicalSkills', 'technicalSkill',
+            'hobbies', 'hobby', 'sports', 'clubs', 'interests', 'interest', 'achievements', 
+            'certifications', 'programmingLanguages', 'address'
         ];
 
-        let keywordFilters = [];
+        let andConditions = [];
 
         // 4. Build Keyword Regex Filters (ANY keyword match)
         if (keywords.length > 0) {
+            let keywordOr = [];
             keywords.forEach(word => {
                 const regex = new RegExp(word, 'i');
                 searchFields.forEach(field => {
-                    keywordFilters.push({ [field]: { $regex: regex } });
+                    keywordOr.push({ [field]: { $regex: regex } });
                 });
+            });
+            if (keywordOr.length > 0) andConditions.push({ $or: keywordOr });
+        }
+
+        // 5. Add Year Filter
+        if (yearOfStudy) {
+            andConditions.push({ yearOfStudy: yearOfStudy });
+        }
+
+        // 6. Add CGPA Filter
+        if (cgpaFilter) {
+            // Using $expr to handle potential stringified CGPA values in DB if any
+            const operator = cgpaFilter.$gte ? '$gte' : '$lte';
+            const value = cgpaFilter.$gte || cgpaFilter.$lte;
+            andConditions.push({
+                $expr: { [operator]: [{ $toDouble: "$cgpa" }, value] }
             });
         }
 
-        // 5. Construct Final MongoDB Query based on rules
+        // 7. Construct Final Query
         let mongoQuery = {};
-
-        if (keywordFilters.length > 0 && yearOfStudy) {
-            // Both detected -> combine with $and
-            mongoQuery = {
-                $and: [
-                    { yearOfStudy: yearOfStudy },
-                    { $or: keywordFilters }
-                ]
-            };
-        } else if (keywordFilters.length > 0) {
-            // Only keywords -> search across all fields
-            mongoQuery = { $or: keywordFilters };
-        } else if (yearOfStudy) {
-            // Only year phrase
-            mongoQuery = { yearOfStudy: yearOfStudy };
+        if (andConditions.length > 1) {
+            mongoQuery = { $and: andConditions };
+        } else if (andConditions.length === 1) {
+            mongoQuery = andConditions[0];
         } else {
-            // If keywords were too short/filler, fallback to all but try direct query search just in case
+            // Fallback: match entire query against all fields
             mongoQuery = {
                 $or: searchFields.map(f => ({ [f]: { $regex: new RegExp(query.trim(), 'i') } }))
             };
         }
 
-        // 6. Execute Search
+        // 8. Execute Search
         const students = await Student.find(mongoQuery);
 
         console.log(`Search result for "${query}": ${students.length} found`);
@@ -291,6 +310,7 @@ const naturalLanguageQuery = async (req, res) => {
         res.status(200).json({
             meta: {
                 original_query: query,
+                extracted_keyword: keywords.join(', ') || "Full Match", // Singular for frontend compatibility
                 extracted_keywords: keywords,
                 detected_year: yearOfStudy,
                 count: students.length
@@ -300,7 +320,7 @@ const naturalLanguageQuery = async (req, res) => {
 
     } catch (error) {
         console.error('NLP Search Error:', error);
-        res.status(500).json({ message: 'Search system is stable but failed to process this specific query.' });
+        res.status(500).json({ message: 'Search system encountered an error. Please try a simpler keyword.' });
     }
 };
 
