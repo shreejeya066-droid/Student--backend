@@ -1,0 +1,6 @@
+Connected to MongoDB.
+Total Students: 11
+3rd Year Students: 7
+Students with CGPA >= 8: 3
+3rd Year Students with CGPA >= 8: 3
+Example Match: Aishwarya SR CGPA: 8.0 Year: 3
