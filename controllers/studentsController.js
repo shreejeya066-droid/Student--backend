@@ -267,35 +267,40 @@ const extractQueryIntent = (text) => {
     };
 };
 
-// --- ONE-TIME DATA CORRECTION HELPER ---
+// Variable to track migration status
+let migrationRun = false;
+
+// --- DATA CORRECTION HELPER ---
 const runCgpaMigration = async () => {
     try {
-        console.log('[MIGRATION] Checking for string-based CGPA values...');
-        // Find students with string cgpa (Mongoose doesn't easily filter by BSON type, 
-        // but we can update all records once to ensure Double type).
-        // This is idempotent: $toDouble will work even if already numeric.
-        await Student.updateMany(
-            { cgpa: { $exists: true } },
-            [{ $set: { cgpa: { $toDouble: "$cgpa" } } }]
-        );
-        console.log('[MIGRATION] CGPA values successfully converted to Numbers in database.');
+        console.log('[MIGRATION] Checking for student records with string-based CGPA...');
+        // Standardize all CGPA records to Numbers. 
+        // This uses parseFloat-style behavior for migration.
+        const students = await Student.find({ cgpa: { $exists: true } });
+        let count = 0;
+        for (const student of students) {
+            // Only update if it's not already a pure number type or needs cleaning
+            if (typeof student.cgpa !== 'number') {
+                const val = parseFloat(student.cgpa);
+                if (!isNaN(val)) {
+                    await Student.updateOne({ _id: student._id }, { $set: { cgpa: val } });
+                    count++;
+                }
+            }
+        }
+        if (count > 0) console.log(`[MIGRATION] Updated ${count} records to numeric CGPA.`);
     } catch (err) {
-        // Silently fail if there's an error during conversion (e.g. invalid formats)
-        // or if the MongoDB version doesn't support $toDouble in aggregation pipeline update.
         console.error('[MIGRATION ERROR] Failed to convert CGPA to numbers:', err.message);
     }
 };
-
-// Variable to track migration status
-let migrationRun = false;
 
 // Redesigned NLP Search: Flexible human-like search logic with Hybrid Support
 const naturalLanguageQuery = async (req, res) => {
     try {
         const { query, year, cgpa, placement, skill } = req.body;
 
-        // 1. No mapping needed if nothing is provided
-        if ((!query || query.trim() === '') && !year && !cgpa && !placement && !skill) {
+        // 1. Initial response if nothing is provided
+        if ((!query || query.trim() === '') && (!year || year === 'All') && (!cgpa || cgpa === 'All') && (!placement || placement === 'All') && (!skill || skill === 'All')) {
             const allStudents = await Student.find({});
             return res.status(200).json({
                 meta: { count: allStudents.length, extracted_keyword: "All Students", dbStatus: "Connected", extracted_intent: {} },
@@ -307,9 +312,9 @@ const naturalLanguageQuery = async (req, res) => {
         const intent = extractQueryIntent(query || '');
         const { yearOfStudy: textYear, keywords, cgpaFilter: textCgpaFilter, placementWillingness: textPlacement } = intent;
 
-        // Lazy migration for data types
+        // --- Standardize Data Types (Awaited for immediate consistency) ---
         if (!migrationRun) {
-            runCgpaMigration();
+            await runCgpaMigration();
             migrationRun = true;
         }
 
@@ -322,59 +327,58 @@ const naturalLanguageQuery = async (req, res) => {
 
         let andConditions = [];
 
-        // 3. Year Detection: text overrides dropdown
+        // 3. Year Condition: Text overrides Dropdown
         const finalYear = textYear || (year && year !== 'All' ? year : null);
         if (finalYear) {
             andConditions.push({ yearOfStudy: Number(finalYear) });
         }
 
-        // 4. CGPA Detection: text overrides dropdown (Requirement 9)
+        // 4. CGPA Condition: Text overrides Dropdown (Requirement 9)
         let finalCgpaFilter = textCgpaFilter;
         if (!finalCgpaFilter && cgpa && cgpa !== 'All') {
-            finalCgpaFilter = { $gte: parseFloat(cgpa) };
+            // Dropdown values like '8' come through as strings, convert to number
+            const minCgpa = parseFloat(cgpa);
+            if (!isNaN(minCgpa)) {
+                finalCgpaFilter = { $gte: minCgpa };
+            }
         }
         if (finalCgpaFilter) {
             andConditions.push({ cgpa: finalCgpaFilter });
         }
 
-        // 5. Placement Detection: text overrides dropdown
+        // 5. Placement Condition: Text overrides Dropdown
         const finalPlacement = textPlacement || (placement && placement !== 'All' ? (placement === 'Interested' ? 'yes' : 'no') : null);
         if (finalPlacement) {
             andConditions.push({ placementWillingness: { $regex: new RegExp(finalPlacement, 'i') } });
         }
 
-        // 6. Skill and Keyword Mapping (Requirement 5: Split and OR logic)
+        // 6. Keywords/Skills (Requirement 5: OR logic for split terms)
         let skillTerms = [...keywords];
-        if (skill && skill !== 'All') {
-            skillTerms.push(skill);
-        }
+        if (skill && skill !== 'All') skillTerms.push(skill);
 
         if (skillTerms.length > 0) {
-            // Join terms with OR pipe for flexible matching across all searchable fields
             const pattern = skillTerms.join("|");
             const regex = new RegExp(pattern, 'i');
-            
-            const orSkillMatches = searchFields.map(field => ({
-                [field]: { $regex: regex }
-            }));
-            
+            const orSkillMatches = searchFields.map(field => ({ [field]: { $regex: regex } }));
             andConditions.push({ $or: orSkillMatches });
         }
 
-        // 7. Combine conditions with AND logic (Requirement 7)
+        // 7. Combine conditions
         let mongoQuery = {};
         if (andConditions.length > 0) {
             mongoQuery = andConditions.length > 1 ? { $and: andConditions } : andConditions[0];
         }
 
-        console.log('Executing Improved NLP Query:', JSON.stringify(mongoQuery));
+        console.log(`[DEBUG] Executing Query: ${JSON.stringify(mongoQuery)}`);
         const students = await Student.find(mongoQuery);
 
-        console.log(`Search result for query "${query || 'Filters'}": ${students.length} found`);
+        // Map back to singular name expected by frontend
+        const displayKeyword = skillTerms.length > 0 ? skillTerms.join(', ') : (textCgpaFilter ? "CGPA Criteria" : (textYear ? "Year Filter" : "Specific Intent"));
 
         res.status(200).json({
             meta: {
                 original_query: query,
+                extracted_keyword: displayKeyword,
                 extracted_keywords: skillTerms,
                 detected_year: finalYear,
                 count: students.length,
@@ -390,10 +394,7 @@ const naturalLanguageQuery = async (req, res) => {
 
     } catch (error) {
         console.error('NLP Search Error:', error);
-        res.status(500).json({ 
-            message: 'Search system encountered an error.',
-            error: error.message 
-        });
+        res.status(500).json({ message: 'Search failure', error: error.message });
     }
 };
 
