@@ -62,6 +62,14 @@ const registerStudent = async (req, res) => {
     try {
         const { rollNumber, password, firstName, lastName, email, phone, mobile, altMobile, department, yearOfStudy } = req.body;
 
+        // Password Validation (8+ chars, 1 uppercase, 1 special, 1 digit)
+        const passwordRegex = /^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]).{8,}$/;
+        if (!passwordRegex.test(password)) {
+            return res.status(400).json({ 
+                message: 'Password must be at least 8 characters long and contain at least one uppercase letter, one digit, and one special character.' 
+            });
+        }
+
         const student = await Student.findOne({ rollNumber });
 
         // Case 1: Student exists
@@ -509,6 +517,14 @@ const resetPassword = async (req, res) => {
 
         if (!email || !otp || !password) {
             return res.status(400).json({ message: 'Email, OTP, and new password are required' });
+        }
+
+        // Password Validation (8+ chars, 1 uppercase, 1 special, 1 digit)
+        const passwordRegex = /^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]).{8,}$/;
+        if (!passwordRegex.test(password)) {
+            return res.status(400).json({ 
+                message: 'Password must be at least 8 characters long and contain at least one uppercase letter, one digit, and one special character.' 
+            });
         }
 
         // Find student and verify OTP again to be sure
