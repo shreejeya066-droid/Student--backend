@@ -313,8 +313,8 @@ const naturalLanguageQuery = async (req, res) => {
         }
 
         // 5. Keyword Regex Filters (Broad Match across all fields)
-        const queryWords = keywords.length > 0 ? keywords : [query.trim()];
-        if (queryWords.length > 0 && queryWords[0] !== '') {
+        const queryWords = keywords;
+        if (queryWords.length > 0) {
             // IMPROVEMENT: Use AND logic for multi-word queries to increase precision
             // Each word must be present in at least one field, but all words are required.
             queryWords.forEach(word => {
@@ -342,7 +342,7 @@ const naturalLanguageQuery = async (req, res) => {
         res.status(200).json({
             meta: {
                 original_query: query,
-                extracted_keyword: queryWords.join(', ') || "Full Match",
+                extracted_keyword: queryWords.join(', ') || "Intent Match",
                 extracted_keywords: queryWords,
                 detected_year: finalYear,
                 count: students.length,
