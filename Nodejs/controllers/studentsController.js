@@ -104,33 +104,45 @@ const deleteStudent = async (req, res) => {
 
 // Optimized Intent Extractor
 const extractQueryIntent = (text) => {
-    if (!text) return { yearOfStudy: null, keywords: [], cgpaFilter: null };
+    if (!text) return { yearOfStudy: null, keywords: [], cgpaFilter: null, placementWillingness: null };
     let normalized = text.toLowerCase().trim();
     let yearOfStudy = null;
     let cgpaFilter = null;
+    let placementWillingness = null;
 
-    const aboveMatch = normalized.match(/(?:above|more than|greater than|>)\s*(\d+(\.\d+)?)/i);
-    const belowMatch = normalized.match(/(?:below|less than|smaller than|<)\s*(\d+(\.\d+)?)/i);
+    const aboveMatch = normalized.match(/(?:above|more than|greater than|>|>=)\s*(\d+(\.\d+)?)/i);
+    const belowMatch = normalized.match(/(?:below|less than|smaller than|<|<=)\s*(\d+(\.\d+)?)/i);
     if (aboveMatch) {
         cgpaFilter = { $gte: Number(aboveMatch[1]) };
-        normalized = normalized.replace(aboveMatch[0], '');
+        normalized = normalized.replace(aboveMatch[0], ' ');
     } else if (belowMatch) {
-        cgpaFilter = { $lt: Number(belowMatch[1]) };
-        normalized = normalized.replace(belowMatch[0], '');
+        cgpaFilter = { $lte: Number(belowMatch[1]) };
+        normalized = normalized.replace(belowMatch[0], ' ');
     }
 
-    const yearMappers = { '1st year': 1, 'first year': 1, '2nd year': 2, 'second year': 2, '3rd year': 3, 'third year': 3, '4th year': 4, 'fourth year': 4 };
-    for (const [phrase, year] of Object.entries(yearMappers)) {
-        if (normalized.includes(phrase)) {
-            yearOfStudy = year;
-            normalized = normalized.replace(phrase, '').trim();
-            break;
+    const yearMatch = normalized.match(/(\d)(?:st|nd|rd|th)?\s*year/i);
+    if (yearMatch) {
+        yearOfStudy = parseInt(yearMatch[1]);
+        normalized = normalized.replace(yearMatch[0], ' ');
+    } else {
+        const yearMappers = { 'first year': 1, 'second year': 2, 'third year': 3, 'fourth year': 4, 'final year': 4 };
+        for (const [phrase, year] of Object.entries(yearMappers)) {
+            if (normalized.includes(phrase)) {
+                yearOfStudy = year;
+                normalized = normalized.replace(phrase, ' ');
+                break;
+            }
         }
     }
 
-    const fillerWords = ["students", "student", "who", "with", "and", "the", "in", "like", "for", "matching", "having", "is", "are"];
-    const keywords = normalized.split(/[\s,]+/).filter(word => word.length > 1 && !fillerWords.includes(word));
-    return { yearOfStudy, keywords, cgpaFilter };
+    if (normalized.match(/placement ready|placed|ready for placement|willing for placement/i)) {
+        placementWillingness = 'yes';
+        normalized = normalized.replace(/placement ready|placed|ready for placement|willing for placement/i, ' ');
+    }
+
+    const fillerWords = ["students", "student", "who", "with", "and", "the", "in", "like", "for", "matching", "having", "is", "are", "cgpa", "year", "placement", "willing", "ready", "skill", "skills", "knowing", "above", "below", "more", "than", "greater", "less", "of", "all"];
+    const keywords = normalized.split(/[\s,]+/).filter(word => word.trim().length > 1 && !fillerWords.includes(word.trim()));
+    return { yearOfStudy, keywords, cgpaFilter, placementWillingness };
 };
 
 const naturalLanguageQuery = async (req, res) => {
@@ -144,37 +156,37 @@ const naturalLanguageQuery = async (req, res) => {
             });
         }
 
-        const { yearOfStudy: textYear, keywords, cgpaFilter: textCgpa } = extractQueryIntent(query || '');
+        const intent = extractQueryIntent(query || '');
+        const { yearOfStudy: textYear, keywords, cgpaFilter: textCgpa, placementWillingness: textPlacement } = intent;
         const searchFields = ['firstName', 'lastName', 'rollNumber', 'skills', 'technicalSkills', 'technicalSkill', 'hobbies', 'hobby', 'sports', 'clubs', 'interests', 'interest', 'achievements', 'certifications', 'programmingLanguages', 'address', 'events', 'tools'];
         let andConditions = [];
 
-        const finalYear = year || textYear;
-        const finalCgpaMin = cgpa || (textCgpa && textCgpa.$gte);
-        
-        if (finalYear && finalYear !== 'All') andConditions.push({ yearOfStudy: Number(finalYear) });
-        if (finalCgpaMin && finalCgpaMin !== 'All') {
-            const minVal = parseFloat(finalCgpaMin);
-            // Handling both String and Number CGPA safely
+        // Priority logic: NLP text parsed data wins over dropdown if exists
+        const finalYear = textYear || (year && year !== 'All' ? Number(year) : null);
+        const finalCgpaMin = (textCgpa && textCgpa.$gte) || (cgpa && cgpa !== 'All' ? parseFloat(cgpa) : null);
+        const finalPlacement = textPlacement || (placement && placement !== 'All' ? (placement === 'Interested' ? 'yes' : 'no') : null);
+
+        if (finalYear) andConditions.push({ yearOfStudy: finalYear });
+        if (finalCgpaMin) {
             andConditions.push({
                 $or: [
-                    { $expr: { $gte: [{ $toDouble: "$cgpa" }, minVal] } },
-                    { cgpa: { $gte: minVal } }
+                    { $expr: { $gte: [{ $toDouble: "$cgpa" }, finalCgpaMin] } },
+                    { cgpa: { $gte: finalCgpaMin } }
                 ]
             });
         }
-        if (placement && placement !== 'All') {
-            const isWilling = placement === 'Interested';
-            andConditions.push({ placementWillingness: { $regex: new RegExp(isWilling ? 'yes' : 'no', 'i') } });
+        if (finalPlacement) {
+            andConditions.push({ placementWillingness: { $regex: new RegExp(finalPlacement, 'i') } });
         }
         if (skill && skill !== 'All') {
             const skillRegex = new RegExp(skill, 'i');
             andConditions.push({ $or: [{ skills: { $regex: skillRegex } }, { technicalSkills: { $regex: skillRegex } }, { programmingLanguages: { $regex: skillRegex } }, { tools: { $regex: skillRegex } }] });
         }
 
-        const queryWords = keywords.length > 0 ? keywords : (query ? [query.trim()] : []);
-        if (queryWords.length > 0 && queryWords[0] !== '') {
+        // Only add keyword search if there are actual keywords left after parsing structured intents
+        if (keywords.length > 0) {
             let keywordOr = [];
-            queryWords.forEach(word => {
+            keywords.forEach(word => {
                 const regex = new RegExp(word, 'i');
                 searchFields.forEach(field => {
                     keywordOr.push({ [field]: { $regex: regex } });
@@ -190,12 +202,12 @@ const naturalLanguageQuery = async (req, res) => {
         res.status(200).json({
             meta: {
                 original_query: query,
-                extracted_keyword: queryWords.join(', ') || "Full Match",
-                extracted_keywords: queryWords,
+                extracted_keyword: keywords.join(', ') || "Full Filter Match",
+                extracted_keywords: keywords,
                 detected_year: finalYear,
                 count: students.length,
                 dbStatus: "Active",
-                extracted_intent: { minCgpa: finalCgpaMin, year: finalYear }
+                extracted_intent: { minCgpa: finalCgpaMin, year: finalYear, placement: finalPlacement }
             },
             data: students
         });

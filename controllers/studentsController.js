@@ -339,21 +339,32 @@ const naturalLanguageQuery = async (req, res) => {
         // 3. Year Condition: Text overrides Dropdown
         const finalYear = textYear || (year && year !== 'All' ? year : null);
         if (finalYear) {
-            andConditions.push({ yearOfStudy: Number(finalYear) });
+            const yearVal = Number(finalYear);
+            andConditions.push({
+                $or: [
+                    { $expr: { $eq: [{ $toInt: "$yearOfStudy" }, yearVal] } },
+                    { yearOfStudy: yearVal }
+                ]
+            });
         }
 
         // 4. CGPA Condition: Requirement 9 (Text overrides dropdown)
-        let finalCgpaFilter = textCgpaFilter;
-        if (!finalCgpaFilter && cgpa && cgpa !== 'All') {
-            const minCgpa = parseFloat(cgpa.toString().replace('>', '').replace('<', ''));
-            if (!isNaN(minCgpa)) {
-                finalCgpaFilter = { $gte: minCgpa };
-            }
+        let finalCgpaValue = (textCgpaFilter && textCgpaFilter.$gte) || (textCgpaFilter && textCgpaFilter.$lte) || null;
+        let isGte = textCgpaFilter ? !!textCgpaFilter.$gte : true;
+
+        if (!finalCgpaValue && cgpa && cgpa !== 'All') {
+            finalCgpaValue = parseFloat(cgpa.toString().replace('>', '').replace('<', ''));
+            isGte = cgpa.toString().includes('>') || !cgpa.toString().includes('<');
         }
         
-        if (finalCgpaFilter) {
-            // Use simple numeric matching. Ensure data is numeric by running fix_cgpa_data.js script.
-            andConditions.push({ cgpa: finalCgpaFilter });
+        if (finalCgpaValue !== null && !isNaN(finalCgpaValue)) {
+            const op = isGte ? '$gte' : '$lte';
+            andConditions.push({
+                $or: [
+                    { $expr: { [op]: [{ $toDouble: "$cgpa" }, finalCgpaValue] } },
+                    { cgpa: { [op]: finalCgpaValue } }
+                ]
+            });
         }
 
         // 5. Placement Condition: Text overrides Dropdown
@@ -382,18 +393,23 @@ const naturalLanguageQuery = async (req, res) => {
         console.log(`[DEBUG] Executing Query: ${JSON.stringify(mongoQuery)}`);
         const students = await Student.find(mongoQuery).limit(100);
 
-        const displayKeyword = skillTerms.length > 0 ? skillTerms.join(', ') : (textCgpaFilter ? "CGPA Specific" : "Unified Search");
+        let filterLabels = [...skillTerms];
+        if (finalYear) filterLabels.push(`Year: ${finalYear}`);
+        if (finalCgpaValue) filterLabels.push(`CGPA ${isGte ? '>' : '<'}= ${finalCgpaValue}`);
+        if (finalPlacement) filterLabels.push(`Placement: ${finalPlacement}`);
+
+        const displayKeyword = filterLabels.length > 0 ? filterLabels.join(' | ') : "Unified Search";
 
         res.status(200).json({
             meta: {
                 original_query: query,
                 extracted_keyword: displayKeyword,
-                extracted_keywords: skillTerms, // Full compatibility
-                detected_year: finalYear,        // Full compatibility
+                extracted_keywords: skillTerms,
+                detected_year: finalYear,
                 count: students.length,
                 dbStatus: "Active",
                 extracted_intent: {
-                    cgpaFilter: finalCgpaFilter,
+                    cgpaFilter: finalCgpaValue !== null ? { [isGte ? '$gte' : '$lte']: finalCgpaValue } : null,
                     year: finalYear,
                     placement: finalPlacement
                 }
