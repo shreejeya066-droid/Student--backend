@@ -237,8 +237,12 @@ const extractQueryIntent = (text) => {
         }
     }
 
-    // 4. Keyword Extraction: Filter out common noise words
-    const fillerWords = ["students", "student", "who", "with", "and", "the", "in", "like", "for", "matching", "having", "is", "are"];
+    // 4. Keyword Extraction: Filter out common noise words and search terms already handled by filters
+    const fillerWords = [
+        "students", "student", "who", "with", "and", "the", "in", "like", "for", 
+        "matching", "having", "is", "are", "cgpa", "year", "placement", "willing", 
+        "ready", "skill", "skills", "knowing", "above", "below", "more", "than", "greater", "less"
+    ];
     const keywords = normalized.split(/[\s,]+/)
         .filter(word => word.length > 1 && !fillerWords.includes(word));
 
