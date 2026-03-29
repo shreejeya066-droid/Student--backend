@@ -17,6 +17,7 @@ const loginStudent = async (req, res) => {
 
         // Support both plain text (legacy) and bcrypt hashed passwords
         const isMatch = student.password === password || await bcrypt.compare(password, student.password);
+        console.log(`[DEBUG] Login Attempt: ${rollNumber} | Match: ${isMatch} | Stored Hash: ${student.password}`);
 
         if (isMatch) {
             res.json({
@@ -427,16 +428,19 @@ const forgotPassword = async (req, res) => {
 
         // Check if student exists
         const student = await Student.findOne({ email });
+        console.log(`[AUTH] Forgot Password requested for: ${email}`);
 
         // Generic response for security
         const genericMessage = "If the email is registered, OTP has been sent.";
 
         if (!student) {
+            console.log(`[AUTH] Email NOT found in database: ${email}`);
             return res.json({ message: genericMessage });
         }
 
         // Generate 6-digit OTP
         const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        console.log(`[DEBUG] Generated OTP for ${email}: ${otp}`);
 
         // Set OTP and Expiry (5 minutes)
         student.otp = otp;
