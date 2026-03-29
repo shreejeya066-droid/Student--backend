@@ -314,16 +314,9 @@ const naturalLanguageQuery = async (req, res) => {
     try {
         const { query, year, cgpa, placement, skill } = req.body;
 
-        // --- Standardize Data Types (Run every time if not confirmed, but fast) ---
-        // Ensuring all CGPA values in DB are numbers to fix comparison issues.
-        if (!migrationRun) {
-            await runCgpaMigration();
-            migrationRun = true;
-        }
-
         // 1. Initial response if nothing is provided
         if ((!query || query.trim() === '') && (!year || year === 'All') && (!cgpa || cgpa === 'All') && (!placement || placement === 'All') && (!skill || skill === 'All')) {
-            const allStudents = await Student.find({});
+            const allStudents = await Student.find({}).limit(50); // Added limit for performance
             return res.status(200).json({
                 meta: { count: allStudents.length, extracted_keyword: "All Students", dbStatus: "Connected", extracted_intent: {} },
                 data: allStudents
@@ -359,16 +352,8 @@ const naturalLanguageQuery = async (req, res) => {
         }
         
         if (finalCgpaFilter) {
-            // To be 100% sure we handle legacy data, we also match if the field is a string of that number
-            const baseVal = finalCgpaFilter.$gte || finalCgpaFilter.$lte;
-            const op = finalCgpaFilter.$gte ? '$gte' : '$lte';
-
-            andConditions.push({
-                $or: [
-                    { cgpa: finalCgpaFilter },
-                    { $expr: { [op]: [{ $toDouble: "$cgpa" }, baseVal] } }
-                ]
-            });
+            // Use simple numeric matching. Ensure data is numeric by running fix_cgpa_data.js script.
+            andConditions.push({ cgpa: finalCgpaFilter });
         }
 
         // 5. Placement Condition: Text overrides Dropdown
@@ -395,14 +380,16 @@ const naturalLanguageQuery = async (req, res) => {
         }
 
         console.log(`[DEBUG] Executing Query: ${JSON.stringify(mongoQuery)}`);
-        const students = await Student.find(mongoQuery);
+        const students = await Student.find(mongoQuery).limit(100);
 
-        const displayKeyword = skillTerms.length > 0 ? skillTerms.join(', ') : (textCgpaFilter ? "CGPA Query" : "Unified Search");
+        const displayKeyword = skillTerms.length > 0 ? skillTerms.join(', ') : (textCgpaFilter ? "CGPA Specific" : "Unified Search");
 
         res.status(200).json({
             meta: {
                 original_query: query,
                 extracted_keyword: displayKeyword,
+                extracted_keywords: skillTerms, // Full compatibility
+                detected_year: finalYear,        // Full compatibility
                 count: students.length,
                 dbStatus: "Active",
                 extracted_intent: {
