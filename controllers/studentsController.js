@@ -246,8 +246,35 @@ const extractQueryIntent = (text) => {
     const keywords = normalized.split(/[\s,]+/)
         .filter(word => word.length > 1 && !fillerWords.includes(word));
 
-    return { yearOfStudy, keywords, cgpaFilter };
+    return { 
+        yearOfStudy, 
+        keywords, 
+        cgpaFilter,
+        extractedCgpa: aboveMatch ? parseFloat(aboveMatch[1]) : (belowMatch ? parseFloat(belowMatch[1]) : null)
+    };
 };
+
+// --- ONE-TIME DATA CORRECTION HELPER ---
+const runCgpaMigration = async () => {
+    try {
+        console.log('[MIGRATION] Checking for string-based CGPA values...');
+        // Find students with string cgpa (Mongoose doesn't easily filter by BSON type, 
+        // but we can update all records once to ensure Double type).
+        // This is idempotent: $toDouble will work even if already numeric.
+        await Student.updateMany(
+            { cgpa: { $exists: true } },
+            [{ $set: { cgpa: { $toDouble: "$cgpa" } } }]
+        );
+        console.log('[MIGRATION] CGPA values successfully converted to Numbers in database.');
+    } catch (err) {
+        // Silently fail if there's an error during conversion (e.g. invalid formats)
+        // or if the MongoDB version doesn't support $toDouble in aggregation pipeline update.
+        console.error('[MIGRATION ERROR] Failed to convert CGPA to numbers:', err.message);
+    }
+};
+
+// Variable to track migration status
+let migrationRun = false;
 
 // Redesigned NLP Search: Flexible human-like search logic with Hybrid Support
 const naturalLanguageQuery = async (req, res) => {
@@ -270,7 +297,13 @@ const naturalLanguageQuery = async (req, res) => {
 
         // 2. Extract Intent from Text
         const intent = extractQueryIntent(query || '');
-        const { yearOfStudy: textYear, keywords, cgpaFilter: textCgpa } = intent;
+        const { yearOfStudy: textYear, keywords, extractedCgpa } = intent;
+
+        // --- LAZY MIGRATION: Runs once on first search to fix database types ---
+        if (!migrationRun) {
+            runCgpaMigration();
+            migrationRun = true;
+        }
 
         // 3. Define target search fields (Inclusive list based on schema)
         const searchFields = [
@@ -284,15 +317,17 @@ const naturalLanguageQuery = async (req, res) => {
 
         // 4. Manual Dropdown Filters (Override/Add to text intent)
         const finalYear = year || textYear;
-        const finalCgpaMin = cgpa || (textCgpa && textCgpa.$gte);
+        
+        // Use either dropdown value or extracted text value, ensuring we have a pure number
+        let rawCgpaVal = cgpa !== 'All' ? cgpa : extractedCgpa;
+        const finalCgpaMin = rawCgpaVal !== null ? parseFloat(rawCgpaVal) : null;
         
         if (finalYear && finalYear !== 'All') {
             andConditions.push({ yearOfStudy: Number(finalYear) });
         }
 
-        if (finalCgpaMin && finalCgpaMin !== 'All') {
-            const minVal = parseFloat(finalCgpaMin);
-            andConditions.push({ cgpa: { $gte: minVal } });
+        if (finalCgpaMin !== null && !isNaN(finalCgpaMin)) {
+            andConditions.push({ cgpa: { $gte: finalCgpaMin } });
         }
 
         if (placement && placement !== 'All') {
