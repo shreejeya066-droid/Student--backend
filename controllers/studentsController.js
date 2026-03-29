@@ -202,28 +202,44 @@ const deleteStudent = async (req, res) => {
 // Optimized Dynamic Intent Extractor (Single Input Version)
 // Lightweight NLP: Extracts keywords, year, and CGPA from free-text input
 const extractQueryIntent = (text) => {
-    if (!text) return { yearOfStudy: null, keywords: [], cgpaFilter: null, placementWillingness: null };
+    if (!text) return { yearOfStudy: null, keywords: [], cgpaCriteria: null, placementWillingness: null };
 
     // 1. Normalize input
     let normalized = text.toLowerCase().trim();
     let yearOfStudy = null;
-    let cgpaFilter = null;
+    let cgpaCriteria = null;
     let placementWillingness = null;
 
-    // 2. CGPA Detection (above/below/greater than etc)
-    // Always treat as numbers, use parseFloat
-    const aboveMatch = normalized.match(/(?:above|more than|greater than|>|>=)\s*(\d+(\.\d+)?)/i);
-    const belowMatch = normalized.match(/(?:below|less than|smaller than|<|<=)\s*(\d+(\.\d+)?)/i);
+    // 2. GREEDY CGPA Detection (Covers 'above 8', '8.1 cgpa', '> 7.5', 'cgpa 8.2', etc.)
+    const aboveCgpaRegex = /(?:above|more than|greater than|>|>=|above c\.?g\.?p\.?a\.?|cgpa above)\s*(\d+(\.\d+)?)|(\d+(\.\d+)?)\s*(?:c\.?g\.?p\.?a\.?|grade|score)/i;
+    const belowCgpaRegex = /(?:below|less than|smaller than|<|<=)\s*(\d+(\.\d+)?)/i;
     
+    const aboveMatch = normalized.match(aboveCgpaRegex);
+    const belowMatch = normalized.match(belowCgpaRegex);
+
     if (aboveMatch) {
-        cgpaFilter = { $gte: parseFloat(aboveMatch[1]) };
-        normalized = normalized.replace(aboveMatch[0], ' ');
+        const val = parseFloat(aboveMatch[1] || aboveMatch[3]);
+        if (!isNaN(val)) {
+            cgpaCriteria = { $gte: val };
+            normalized = normalized.replace(aboveMatch[0], ' ');
+        }
     } else if (belowMatch) {
-        cgpaFilter = { $lte: parseFloat(belowMatch[1]) };
-        normalized = normalized.replace(belowMatch[0], ' ');
+        const val = parseFloat(belowMatch[1]);
+        if (!isNaN(val)) {
+            cgpaCriteria = { $lte: val };
+            normalized = normalized.replace(belowMatch[0], ' ');
+        }
+    } else {
+        // Standalone number detection for CGPA candidates (e.g., "with 8.5")
+        const plainNumberMatch = normalized.match(/\b([56789](\.\d+)?)\b/);
+        if (plainNumberMatch) {
+            const val = parseFloat(plainNumberMatch[1]);
+            cgpaCriteria = { $gte: val };
+            normalized = normalized.replace(plainNumberMatch[0], ' ');
+        }
     }
 
-    // 3. Year Detection (1st year, 2nd, etc. and final year)
+    // 3. Year Detection
     const yearMatch = normalized.match(/(\d)(?:st|nd|rd|th)?\s*year/i);
     if (yearMatch) {
         yearOfStudy = parseInt(yearMatch[1]);
@@ -261,9 +277,8 @@ const extractQueryIntent = (text) => {
     return { 
         yearOfStudy, 
         keywords, 
-        cgpaFilter,
-        placementWillingness,
-        extractedCgpa: aboveMatch ? parseFloat(aboveMatch[1]) : (belowMatch ? parseFloat(belowMatch[1]) : null)
+        cgpaCriteria,
+        placementWillingness
     };
 };
 
@@ -299,6 +314,13 @@ const naturalLanguageQuery = async (req, res) => {
     try {
         const { query, year, cgpa, placement, skill } = req.body;
 
+        // --- Standardize Data Types (Run every time if not confirmed, but fast) ---
+        // Ensuring all CGPA values in DB are numbers to fix comparison issues.
+        if (!migrationRun) {
+            await runCgpaMigration();
+            migrationRun = true;
+        }
+
         // 1. Initial response if nothing is provided
         if ((!query || query.trim() === '') && (!year || year === 'All') && (!cgpa || cgpa === 'All') && (!placement || placement === 'All') && (!skill || skill === 'All')) {
             const allStudents = await Student.find({});
@@ -310,13 +332,7 @@ const naturalLanguageQuery = async (req, res) => {
 
         // 2. Extract Intent from Query String
         const intent = extractQueryIntent(query || '');
-        const { yearOfStudy: textYear, keywords, cgpaFilter: textCgpaFilter, placementWillingness: textPlacement } = intent;
-
-        // --- Standardize Data Types (Awaited for immediate consistency) ---
-        if (!migrationRun) {
-            await runCgpaMigration();
-            migrationRun = true;
-        }
+        const { yearOfStudy: textYear, keywords, cgpaCriteria: textCgpaFilter, placementWillingness: textPlacement } = intent;
 
         const searchFields = [
             'firstName', 'lastName', 'rollNumber', 'skills', 'technicalSkills', 'technicalSkill',
@@ -333,17 +349,26 @@ const naturalLanguageQuery = async (req, res) => {
             andConditions.push({ yearOfStudy: Number(finalYear) });
         }
 
-        // 4. CGPA Condition: Text overrides Dropdown (Requirement 9)
+        // 4. CGPA Condition: Requirement 9 (Text overrides dropdown)
         let finalCgpaFilter = textCgpaFilter;
         if (!finalCgpaFilter && cgpa && cgpa !== 'All') {
-            // Dropdown values like '8' come through as strings, convert to number
-            const minCgpa = parseFloat(cgpa);
+            const minCgpa = parseFloat(cgpa.toString().replace('>', '').replace('<', ''));
             if (!isNaN(minCgpa)) {
                 finalCgpaFilter = { $gte: minCgpa };
             }
         }
+        
         if (finalCgpaFilter) {
-            andConditions.push({ cgpa: finalCgpaFilter });
+            // To be 100% sure we handle legacy data, we also match if the field is a string of that number
+            const baseVal = finalCgpaFilter.$gte || finalCgpaFilter.$lte;
+            const op = finalCgpaFilter.$gte ? '$gte' : '$lte';
+
+            andConditions.push({
+                $or: [
+                    { cgpa: finalCgpaFilter },
+                    { $expr: { [op]: [{ $toDouble: "$cgpa" }, baseVal] } }
+                ]
+            });
         }
 
         // 5. Placement Condition: Text overrides Dropdown
@@ -372,15 +397,12 @@ const naturalLanguageQuery = async (req, res) => {
         console.log(`[DEBUG] Executing Query: ${JSON.stringify(mongoQuery)}`);
         const students = await Student.find(mongoQuery);
 
-        // Map back to singular name expected by frontend
-        const displayKeyword = skillTerms.length > 0 ? skillTerms.join(', ') : (textCgpaFilter ? "CGPA Criteria" : (textYear ? "Year Filter" : "Specific Intent"));
+        const displayKeyword = skillTerms.length > 0 ? skillTerms.join(', ') : (textCgpaFilter ? "CGPA Query" : "Unified Search");
 
         res.status(200).json({
             meta: {
                 original_query: query,
                 extracted_keyword: displayKeyword,
-                extracted_keywords: skillTerms,
-                detected_year: finalYear,
                 count: students.length,
                 dbStatus: "Active",
                 extracted_intent: {
