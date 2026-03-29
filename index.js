@@ -68,4 +68,6 @@ app.get('/api/version', (req, res) => {
     res.json({ version: "1.2 - Email Recovery Active" });
 });
 
+module.exports = app;
+
 
