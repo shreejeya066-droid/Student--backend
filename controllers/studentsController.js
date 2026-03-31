@@ -482,7 +482,13 @@ const getPowerBIData = async (req, res) => {
             PlacementWillingness: s.placementWillingness || 'No',
             HigherStudies: s.higherStudies || 'No',
             Skills: [s.programmingLanguages, s.skills, s.technicalSkills, s.tools].filter(Boolean).join(', ') || 'None',
-            Gender: s.gender || 'Not Specified'
+            Gender: s.gender || 'Not Specified',
+            Sem1: parseFloat(s.sem1_cgpa) || 0,
+            Sem2: parseFloat(s.sem2_cgpa) || 0,
+            Sem3: parseFloat(s.sem3_cgpa) || 0,
+            Sem4: parseFloat(s.sem4_cgpa) || 0,
+            Sem5: parseFloat(s.sem5_cgpa) || 0,
+            Sem6: parseFloat(s.sem6_cgpa) || 0
         }));
         res.status(200).json(flatData);
     } catch (error) {
