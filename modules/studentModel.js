@@ -60,6 +60,8 @@ const studentSchema = mongoose.Schema({
     // Skills
     programmingLanguages: { type: String },
     skills: { type: String }, // Renamed from technicalSkills
+    technicalSkills: { type: String }, // For compatibility with frontend / legacy data
+    technicalSkill: { type: String }, // For compatibility
     tools: { type: String },
     certifications: { type: String },
 

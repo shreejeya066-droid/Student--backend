@@ -481,7 +481,7 @@ const getPowerBIData = async (req, res) => {
             Attendance: s.attendance || 0,
             PlacementWillingness: s.placementWillingness || 'No',
             HigherStudies: s.higherStudies || 'No',
-            Skills: s.skills || 'None',
+            Skills: [s.programmingLanguages, s.skills, s.technicalSkills, s.tools].filter(Boolean).join(', ') || 'None',
             Gender: s.gender || 'Not Specified'
         }));
         res.status(200).json(flatData);
