@@ -44,6 +44,7 @@ app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/admin', require('./routes/adminRoutes'));
 app.use('/api/settings', require('./routes/systemSettingsRoutes'));
 app.use('/api/powerbi', require('./routes/powerbiRoutes'));
+app.use('/api/notifications', require('./routes/notificationRoutes'));
 
 // Serve Uploaded Files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
