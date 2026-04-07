@@ -235,7 +235,12 @@ const extractQueryIntent = (text) => {
         const plainNumberMatch = normalized.match(/\b([56789](\.\d+)?)\b/);
         if (plainNumberMatch) {
             const val = parseFloat(plainNumberMatch[1]);
-            cgpaCriteria = { $eq: val };
+            const textVal = plainNumberMatch[1];
+            if (!textVal.includes('.')) {
+                cgpaCriteria = { $range: [val, val + 0.99] };
+            } else {
+                cgpaCriteria = { $eq: val };
+            }
             normalized = normalized.replace(plainNumberMatch[0], ' ');
         }
     }
@@ -354,21 +359,49 @@ const naturalLanguageQuery = async (req, res) => {
         let finalCgpaValue = textCgpaFilter ? (textCgpaFilter.$gte || textCgpaFilter.$lte || textCgpaFilter.$eq) : null;
         let isGte = textCgpaFilter ? !!textCgpaFilter.$gte : true;
         let isEq = textCgpaFilter ? !!textCgpaFilter.$eq : false;
+        let isRange = textCgpaFilter ? !!textCgpaFilter.$range : false;
+        let rangeMax = null;
 
-        if (!finalCgpaValue && cgpa && cgpa !== 'All') {
-            finalCgpaValue = parseFloat(cgpa.toString().replace('>', '').replace('<', ''));
-            isGte = cgpa.toString().includes('>') || !cgpa.toString().includes('<');
-            isEq = false;
+        if (isRange) {
+            finalCgpaValue = textCgpaFilter.$range[0];
+            rangeMax = textCgpaFilter.$range[1];
+        }
+
+        if (finalCgpaValue === null && cgpa && cgpa !== 'All') {
+            if (cgpa.toString().includes('-')) {
+                const parts = cgpa.toString().split('-');
+                finalCgpaValue = parseFloat(parts[0]);
+                rangeMax = parseFloat(parts[1]);
+                isRange = true;
+                isGte = true;
+                isEq = false;
+            } else {
+                finalCgpaValue = parseFloat(cgpa.toString().replace('>', '').replace('<', ''));
+                isGte = cgpa.toString().includes('>') || !cgpa.toString().includes('<');
+                isEq = false;
+            }
         }
         
         if (finalCgpaValue !== null && !isNaN(finalCgpaValue)) {
-            const op = isEq ? '$eq' : (isGte ? '$gte' : '$lte');
-            andConditions.push({
-                $or: [
-                    { $expr: { [op]: [{ $convert: { input: "$cgpa", to: "double", onError: null, onNull: null } }, finalCgpaValue] } },
-                    { cgpa: { [op]: finalCgpaValue } }
-                ]
-            });
+            if (isRange && rangeMax !== null) {
+                andConditions.push({
+                    $or: [
+                        { $and: [ 
+                            { $expr: { $gte: [{ $convert: { input: "$cgpa", to: "double", onError: null, onNull: null } }, finalCgpaValue] } },
+                            { $expr: { $lte: [{ $convert: { input: "$cgpa", to: "double", onError: null, onNull: null } }, rangeMax] } }
+                        ] },
+                        { cgpa: { $gte: finalCgpaValue, $lte: rangeMax } }
+                    ]
+                });
+            } else {
+                const op = isEq ? '$eq' : (isGte ? '$gte' : '$lte');
+                andConditions.push({
+                    $or: [
+                        { $expr: { [op]: [{ $convert: { input: "$cgpa", to: "double", onError: null, onNull: null } }, finalCgpaValue] } },
+                        { cgpa: { [op]: finalCgpaValue } }
+                    ]
+                });
+            }
         }
 
         // 5. Placement Condition: Text overrides Dropdown
@@ -399,9 +432,13 @@ const naturalLanguageQuery = async (req, res) => {
 
         let filterLabels = [...skillTerms];
         if (finalYear) filterLabels.push(`Year: ${finalYear}`);
-        if (finalCgpaValue) {
-            const symbol = isEq ? '=' : (isGte ? '>=' : '<=');
-            filterLabels.push(`CGPA ${symbol} ${finalCgpaValue}`);
+        if (finalCgpaValue !== null) {
+            if (isRange) {
+                filterLabels.push(`CGPA: ${finalCgpaValue} - ${rangeMax}`);
+            } else {
+                const symbol = isEq ? '=' : (isGte ? '>=' : '<=');
+                filterLabels.push(`CGPA ${symbol} ${finalCgpaValue}`);
+            }
         }
         if (finalPlacement) filterLabels.push(`Placement: ${finalPlacement}`);
 
@@ -416,7 +453,7 @@ const naturalLanguageQuery = async (req, res) => {
                 count: students.length,
                 dbStatus: "Active",
                 extracted_intent: {
-                    cgpaFilter: finalCgpaValue !== null ? { [isEq ? '$eq' : (isGte ? '$gte' : '$lte')]: finalCgpaValue } : null,
+                    cgpaFilter: finalCgpaValue !== null ? (isRange ? { $gte: finalCgpaValue, $lte: rangeMax } : { [isEq ? '$eq' : (isGte ? '$gte' : '$lte')]: finalCgpaValue }) : null,
                     year: finalYear,
                     placement: finalPlacement
                 }

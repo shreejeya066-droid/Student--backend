@@ -122,7 +122,12 @@ const extractQueryIntent = (text) => {
         const plainNumberMatch = normalized.match(/\b([56789](\.\d+)?)\b/);
         if (plainNumberMatch) {
             const val = parseFloat(plainNumberMatch[1]);
-            cgpaFilter = { $eq: val };
+            const textVal = plainNumberMatch[1];
+            if (!textVal.includes('.')) {
+                cgpaFilter = { $range: [val, val + 0.99] };
+            } else {
+                cgpaFilter = { $eq: val };
+            }
             normalized = normalized.replace(plainNumberMatch[0], ' ');
         }
     }
@@ -171,12 +176,28 @@ const naturalLanguageQuery = async (req, res) => {
         const finalYear = textYear || (year && year !== 'All' ? Number(year) : null);
         let isEq = textCgpa ? !!textCgpa.$eq : false;
         let isGte = textCgpa ? !!textCgpa.$gte : true;
-        
+        let isRange = textCgpa ? !!textCgpa.$range : false;
+        let rangeMax = null;
+
         let finalCgpaMin = textCgpa ? (textCgpa.$gte || textCgpa.$lte || textCgpa.$eq) : null;
-        if (!finalCgpaMin && cgpa && cgpa !== 'All') {
-            finalCgpaMin = parseFloat(cgpa.toString().replace('>', '').replace('<', ''));
-            isGte = cgpa.toString().includes('>') || !cgpa.toString().includes('<');
-            isEq = false;
+        if (isRange) {
+            finalCgpaMin = textCgpa.$range[0];
+            rangeMax = textCgpa.$range[1];
+        }
+
+        if (finalCgpaMin === null && cgpa && cgpa !== 'All') {
+            if (cgpa.toString().includes('-')) {
+                const parts = cgpa.toString().split('-');
+                finalCgpaMin = parseFloat(parts[0]);
+                rangeMax = parseFloat(parts[1]);
+                isRange = true;
+                isGte = true;
+                isEq = false;
+            } else {
+                finalCgpaMin = parseFloat(cgpa.toString().replace('>', '').replace('<', ''));
+                isGte = cgpa.toString().includes('>') || !cgpa.toString().includes('<');
+                isEq = false;
+            }
         }
 
         const finalPlacement = textPlacement || (placement && placement !== 'All' ? (placement === 'Interested' ? 'yes' : 'no') : null);
@@ -192,13 +213,25 @@ const naturalLanguageQuery = async (req, res) => {
             });
         }
         if (finalCgpaMin !== null && !isNaN(finalCgpaMin)) {
-            const op = isEq ? '$eq' : (isGte ? '$gte' : '$lte');
-            andConditions.push({
-                $or: [
-                    { $expr: { [op]: [{ $convert: { input: "$cgpa", to: "double", onError: null, onNull: null } }, finalCgpaMin] } },
-                    { cgpa: { [op]: finalCgpaMin } }
-                ]
-            });
+            if (isRange && rangeMax !== null) {
+                andConditions.push({
+                    $or: [
+                        { $and: [ 
+                            { $expr: { $gte: [{ $convert: { input: "$cgpa", to: "double", onError: null, onNull: null } }, finalCgpaMin] } },
+                            { $expr: { $lte: [{ $convert: { input: "$cgpa", to: "double", onError: null, onNull: null } }, rangeMax] } }
+                        ] },
+                        { cgpa: { $gte: finalCgpaMin, $lte: rangeMax } }
+                    ]
+                });
+            } else {
+                const op = isEq ? '$eq' : (isGte ? '$gte' : '$lte');
+                andConditions.push({
+                    $or: [
+                        { $expr: { [op]: [{ $convert: { input: "$cgpa", to: "double", onError: null, onNull: null } }, finalCgpaMin] } },
+                        { cgpa: { [op]: finalCgpaMin } }
+                    ]
+                });
+            }
         }
         if (finalPlacement) {
             andConditions.push({ placementWillingness: { $regex: new RegExp(finalPlacement, 'i') } });
@@ -232,7 +265,7 @@ const naturalLanguageQuery = async (req, res) => {
                 detected_year: finalYear,
                 count: students.length,
                 dbStatus: "Active",
-                extracted_intent: { cgpaFilter: finalCgpaMin !== null ? { [isEq ? '$eq' : (isGte ? '$gte' : '$lte')]: finalCgpaMin } : null, year: finalYear, placement: finalPlacement }
+                extracted_intent: { cgpaFilter: finalCgpaMin !== null ? (isRange ? { $gte: finalCgpaMin, $lte: rangeMax } : { [isEq ? '$eq' : (isGte ? '$gte' : '$lte')]: finalCgpaMin }) : null, year: finalYear, placement: finalPlacement }
             },
             data: students
         });
