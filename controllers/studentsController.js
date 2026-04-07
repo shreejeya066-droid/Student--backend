@@ -211,8 +211,9 @@ const extractQueryIntent = (text) => {
     let placementWillingness = null;
 
     // 2. GREEDY CGPA Detection (Covers 'above 8', '8.1 cgpa', '> 7.5', 'cgpa 8.2', etc.)
-    const aboveCgpaRegex = /(?:above|more than|greater than|>|>=|above c\.?g\.?p\.?a\.?|cgpa above)\s*(\d+(\.\d+)?)|(\d+(\.\d+)?)\s*(?:c\.?g\.?p\.?a\.?|grade|score)/i;
-    const belowCgpaRegex = /(?:below|less than|smaller than|<|<=)\s*(\d+(\.\d+)?)/i;
+    // IMPROVEMENT: Handle 'cgpaabove8.0' without spaces.
+    const aboveCgpaRegex = /(?:above|more than|greater than|>|>=|above c\.?g\.?p\.?a\.?|cgpa\s*above|cgpaabove)\s*(\d+(\.\d+)?)|(\d+(\.\d+)?)\s*(?:c\.?g\.?p\.?a\.?|grade|score)/i;
+    const belowCgpaRegex = /(?:below|less than|smaller than|<|<=|cgpabelow|cgpa\s*below)\s*(\d+(\.\d+)?)/i;
     
     const aboveMatch = normalized.match(aboveCgpaRegex);
     const belowMatch = normalized.match(belowCgpaRegex);
