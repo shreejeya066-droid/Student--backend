@@ -235,7 +235,7 @@ const extractQueryIntent = (text) => {
         const plainNumberMatch = normalized.match(/\b([56789](\.\d+)?)\b/);
         if (plainNumberMatch) {
             const val = parseFloat(plainNumberMatch[1]);
-            cgpaCriteria = { $gte: val };
+            cgpaCriteria = { $eq: val };
             normalized = normalized.replace(plainNumberMatch[0], ' ');
         }
     }
@@ -247,7 +247,7 @@ const extractQueryIntent = (text) => {
         normalized = normalized.replace(yearMatch[0], ' ');
     } else {
         const yearMappers = {
-            'first year': 1, 'second year': 2, 'third year': 3, 'fourth year': 4, 'final year': 4
+            'first year': 1, 'second year': 2, 'third year': 3
         };
         for (const [phrase, year] of Object.entries(yearMappers)) {
             if (normalized.includes(phrase)) {
@@ -351,16 +351,18 @@ const naturalLanguageQuery = async (req, res) => {
         }
 
         // 4. CGPA Condition: Requirement 9 (Text overrides dropdown)
-        let finalCgpaValue = (textCgpaFilter && textCgpaFilter.$gte) || (textCgpaFilter && textCgpaFilter.$lte) || null;
+        let finalCgpaValue = textCgpaFilter ? (textCgpaFilter.$gte || textCgpaFilter.$lte || textCgpaFilter.$eq) : null;
         let isGte = textCgpaFilter ? !!textCgpaFilter.$gte : true;
+        let isEq = textCgpaFilter ? !!textCgpaFilter.$eq : false;
 
         if (!finalCgpaValue && cgpa && cgpa !== 'All') {
             finalCgpaValue = parseFloat(cgpa.toString().replace('>', '').replace('<', ''));
             isGte = cgpa.toString().includes('>') || !cgpa.toString().includes('<');
+            isEq = false;
         }
         
         if (finalCgpaValue !== null && !isNaN(finalCgpaValue)) {
-            const op = isGte ? '$gte' : '$lte';
+            const op = isEq ? '$eq' : (isGte ? '$gte' : '$lte');
             andConditions.push({
                 $or: [
                     { $expr: { [op]: [{ $convert: { input: "$cgpa", to: "double", onError: null, onNull: null } }, finalCgpaValue] } },
@@ -397,7 +399,10 @@ const naturalLanguageQuery = async (req, res) => {
 
         let filterLabels = [...skillTerms];
         if (finalYear) filterLabels.push(`Year: ${finalYear}`);
-        if (finalCgpaValue) filterLabels.push(`CGPA ${isGte ? '>' : '<'}= ${finalCgpaValue}`);
+        if (finalCgpaValue) {
+            const symbol = isEq ? '=' : (isGte ? '>=' : '<=');
+            filterLabels.push(`CGPA ${symbol} ${finalCgpaValue}`);
+        }
         if (finalPlacement) filterLabels.push(`Placement: ${finalPlacement}`);
 
         const displayKeyword = filterLabels.length > 0 ? filterLabels.join(' | ') : "Unified Search";
@@ -411,7 +416,7 @@ const naturalLanguageQuery = async (req, res) => {
                 count: students.length,
                 dbStatus: "Active",
                 extracted_intent: {
-                    cgpaFilter: finalCgpaValue !== null ? { [isGte ? '$gte' : '$lte']: finalCgpaValue } : null,
+                    cgpaFilter: finalCgpaValue !== null ? { [isEq ? '$eq' : (isGte ? '$gte' : '$lte')]: finalCgpaValue } : null,
                     year: finalYear,
                     placement: finalPlacement
                 }
