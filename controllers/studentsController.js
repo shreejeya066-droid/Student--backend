@@ -343,8 +343,9 @@ const naturalLanguageQuery = async (req, res) => {
             const yearVal = Number(finalYear);
             andConditions.push({
                 $or: [
-                    { $expr: { $eq: [{ $toInt: "$yearOfStudy" }, yearVal] } },
-                    { yearOfStudy: yearVal }
+                    { $expr: { $eq: [{ $convert: { input: "$yearOfStudy", to: "int", onError: null, onNull: null } }, yearVal] } },
+                    { yearOfStudy: yearVal },
+                    { yearOfStudy: String(yearVal) }
                 ]
             });
         }
@@ -362,7 +363,7 @@ const naturalLanguageQuery = async (req, res) => {
             const op = isGte ? '$gte' : '$lte';
             andConditions.push({
                 $or: [
-                    { $expr: { [op]: [{ $toDouble: "$cgpa" }, finalCgpaValue] } },
+                    { $expr: { [op]: [{ $convert: { input: "$cgpa", to: "double", onError: null, onNull: null } }, finalCgpaValue] } },
                     { cgpa: { [op]: finalCgpaValue } }
                 ]
             });

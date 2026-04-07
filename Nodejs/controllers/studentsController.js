@@ -166,11 +166,20 @@ const naturalLanguageQuery = async (req, res) => {
         const finalCgpaMin = (textCgpa && textCgpa.$gte) || (cgpa && cgpa !== 'All' ? parseFloat(cgpa) : null);
         const finalPlacement = textPlacement || (placement && placement !== 'All' ? (placement === 'Interested' ? 'yes' : 'no') : null);
 
-        if (finalYear) andConditions.push({ yearOfStudy: finalYear });
+        if (finalYear) {
+            const yearVal = Number(finalYear);
+            andConditions.push({
+                $or: [
+                    { $expr: { $eq: [{ $convert: { input: "$yearOfStudy", to: "int", onError: null, onNull: null } }, yearVal] } },
+                    { yearOfStudy: yearVal },
+                    { yearOfStudy: String(yearVal) }
+                ]
+            });
+        }
         if (finalCgpaMin) {
             andConditions.push({
                 $or: [
-                    { $expr: { $gte: [{ $toDouble: "$cgpa" }, finalCgpaMin] } },
+                    { $expr: { $gte: [{ $convert: { input: "$cgpa", to: "double", onError: null, onNull: null } }, finalCgpaMin] } },
                     { cgpa: { $gte: finalCgpaMin } }
                 ]
             });
