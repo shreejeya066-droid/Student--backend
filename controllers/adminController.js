@@ -13,6 +13,8 @@ const loginAdmin = async (req, res) => {
                 _id: admin._id,
                 username: admin.username,
                 email: admin.email,
+                name: admin.name,
+                mobile: admin.mobile,
                 role: 'admin',
                 isFirstLogin: admin.isFirstLogin
             });
@@ -76,6 +78,8 @@ const updateAdminProfile = async (req, res) => {
             _id: admin._id,
             username: admin.username,
             email: admin.email,
+            name: admin.name,
+            mobile: admin.mobile,
             role: 'admin',
             isFirstLogin: admin.isFirstLogin
         });
